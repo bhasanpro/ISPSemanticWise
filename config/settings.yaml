@@ -1,0 +1,266 @@
+# ISPSemanticWise Main Settings
+# All configurable settings for the application
+
+app:
+  name: "ISPSemanticWise"
+  version: "0.1.0"
+  environment: "development"
+  host: "0.0.0.0"
+  port: 8000
+  debug: true
+  log_level: "INFO"
+
+# Vector Database Configuration
+vector_db:
+  provider: "chroma"  # chroma, pinecone, weaviate
+  chroma:
+    host: "localhost"
+    port: 8000
+    collection_name: "isp_semantic_chunks"
+    persist_directory: "./data/chroma"
+  # pinecone:
+  #   api_key: "${PINECONE_API_KEY}"
+  #   environment: "us-west1-gcp"
+  #   index_name: "isp-semantic"
+  # weaviate:
+  #   url: "http://localhost:8080"
+  #   api_key: "${WEAVIATE_API_KEY}"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  batch_size: 100
+
+# Graph Database Configuration
+graph_db:
+  provider: "neo4j"  # neo4j, networkx
+  neo4j:
+    uri: "bolt://localhost:7687"
+    user: "neo4j"
+    password: "password"
+    database: "neo4j"
+  networkx:
+    graph_path: "./data/networkx/observability_graph.gpickle"
+  sync_interval_seconds: 300  # 5 minutes for near real-time sync
+
+# Relational Database Configuration (Oracle)
+relational_db:
+  provider: "oracle"
+  host: "localhost"
+  port: 1521
+  service_name: "ORCL"
+  user: "ISP_SEMANTIC_USER"
+  password: "${ORACLE_PASSWORD}"
+  schema: "ISP_SEMANTIC"
+  pool_size: 20
+  max_overflow: 10
+  pool_timeout: 30
+
+# Model Configuration (referenced from models.yaml)
+models:
+  config_file: "models.yaml"
+
+# Ingestion Configuration
+ingestion:
+  # Ab Initio
+  ab_initio:
+    graph_path: "/data/ab_initio/graphs"
+    xfr_path: "/data/ab_initio/xfrs"
+    dml_path: "/data/ab_initio/dmls"
+    file_patterns:
+      - "*.mp"
+      - "*.xfr"
+      - "*.dml"
+      - "*.xml"
+    batch_size: 50
+    parse_timeout_seconds: 300
+    use_sdk_export: true  # Use Ab Initio SDK export utility
+
+  # Oracle
+  oracle:
+    host: "localhost"
+    port: 1521
+    service_name: "ORCL"
+    user: "ISP_SEMANTIC_USER"
+    password: "${ORACLE_PASSWORD}"
+    schema: "POST_TRADE"
+    parse_stored_procedures: true
+    parse_views: true
+    parse_tables: true
+    extract_dependencies: true
+
+  # Unix
+  unix:
+    scripts_path: "/data/scripts"
+    file_patterns:
+      - "*.ksh"
+      - "*.sh"
+      - "*.bash"
+    extract_variables: true
+    extract_commands: true
+    trace_data_flow: true
+
+  # Email
+  email:
+    enabled: false
+    source: "file"  # file, exchange, imap
+    # exchange:
+    #   server: "outlook.office365.com"
+    #   username: "${EMAIL_USER}"
+    #   password: "${EMAIL_PASSWORD}"
+    # imap:
+    #   server: "imap.gmail.com"
+    #   port: 993
+    #   username: "${EMAIL_USER}"
+    #   password: "${EMAIL_PASSWORD}"
+    file_path: "./data/emails"
+    thread_reconstruction: true
+
+  # Jira
+  jira:
+    enabled: false
+    url: "https://your-company.atlassian.net"
+    user: "your-email@company.com"
+    api_token: "${JIRA_API_TOKEN}"
+    project_key: "PTM"
+    issue_types: ["Bug", "Story", "Task", "Incident"]
+    sync_interval_hours: 24
+
+  # Confluence
+  confluence:
+    enabled: false
+    url: "https://your-company.atlassian.net/wiki"
+    user: "your-email@company.com"
+    api_token: "${CONFLUENCE_API_TOKEN}"
+    space_keys: ["PTM", "TECH"]
+    sync_interval_hours: 24
+
+  # NetworkX Graph Sync
+  networkx_sync:
+    enabled: true
+    graph_path: "./data/networkx/observability_graph.gpickle"
+    sync_interval_seconds: 300
+    enrich_with_ingested: true
+
+# Processing Pipeline Configuration
+processing:
+  parsing:
+    # Tree-sitter parsers
+    parsers:
+      plsql:
+        enabled: true
+        language: "plsql"
+      python:
+        enabled: true
+        language: "python"
+      bash:
+        enabled: true
+        language: "bash"
+      ab_initio:
+        enabled: true
+        # Custom parser for Ab Initio XML/GraphML
+
+  chunking:
+    strategy: "semantic"  # semantic, fixed, recursive
+    code:
+      chunk_size: 100
+      chunk_overlap: 20
+      min_chunk_size: 20
+    documentation:
+      chunk_size: 500
+      chunk_overlap: 50
+    email:
+      chunk_size: 1000
+      chunk_overlap: 100
+
+  embedding:
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    device: "cpu"  # cpu, cuda, mps
+    batch_size: 32
+    normalize: true
+
+  linking:
+    entity_types:
+      - "BUSINESS_TERM"
+      - "TECHNICAL_ARTIFACT"
+      - "TRANSFORMATION"
+      - "TABLE"
+      - "COLUMN"
+      - "PROCEDURE"
+      - "GRAPH"
+      - "PORT"
+      - "SCRIPT"
+      - "VARIABLE"
+    confidence_threshold: 0.7
+    use_llm_verification: true
+
+# Semantic Services Configuration
+services:
+  glossary:
+    enabled: true
+    batch_size: 20
+    tier: "tier_2"
+    output_format: "yaml"
+    validation_required: true
+
+  nl2sql:
+    enabled: true
+    tier: "tier_1"
+    max_tokens: 2000
+    temperature: 0.1
+    include_lineage: true
+    validate_sql: true
+
+  debugger:
+    enabled: true
+    tier: "hybrid"
+    max_trace_depth: 10
+    include_transformation_logic: true
+
+  narrator:
+    enabled: true
+    tier: "tier_2"
+    max_tokens: 4000
+    temperature: 0.3
+    include_prevention: true
+
+  impact:
+    enabled: true
+    tier: "tier_2"
+    max_depth: 5
+    include_risk_score: true
+
+# API Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  timeout: 60
+  cors:
+    enabled: true
+    allow_origins: ["http://localhost:3000"]
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+
+# Security
+security:
+  secret_key: "${SECRET_KEY}"
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+  password_min_length: 12
+  bcrypt_rounds: 12
+
+# Feature Flags
+features:
+  tier2_enabled: true
+  email_ingestion: false
+  jira_ingestion: false
+  ui_enabled: false
+  graph_visualization: true
+  export_enabled: true
+
+# Monitoring
+monitoring:
+  log_level: "INFO"
+  log_format: "json"
+  metrics_enabled: true
+  tracing_enabled: false
+  sentry_dsn: ""

@@ -1,0 +1,87 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+config/.env
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Data files
+data/
+*.sqlite
+*.db
+*.duckdb
+
+# ChromaDB
+chroma_data/
+chroma.sqlite3
+
+# Neo4j
+neo4j_data/
+neo4j_logs/
+
+# Ollama
+ollama_data/
+
+# Model cache
+~/.cache/huggingface/
+~/.cache/torch/
+
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+*.local
+*.local.py
+
+# Secrets
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+
+# IDE specific
+.vscode/settings.json
+.vscode/launch.json

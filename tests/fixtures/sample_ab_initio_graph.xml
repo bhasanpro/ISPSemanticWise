@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graph name="G_TRADE_ENRICH" version="1.0">
+  <components>
+    <component name="INPUT_TRADE" type="INPUT_FILE">
+      <ports>
+        <port name="TRADE_ID" type="string"/>
+        <port name="TRD_DT" type="date"/>
+        <port name="CP_CD" type="string"/>
+        <port name="SETT_RAW" type="string"/>
+        <port name="SETT_CCY" type="string"/>
+      </ports>
+    </component>
+    
+    <component name="ENRICH_TRADE" type="TRANSFORM">
+      <ports>
+        <input name="IN_TRADE_ID" type="string"/>
+        <input name="IN_TRD_DT" type="date"/>
+        <input name="IN_CP_CD" type="string"/>
+        <input name="IN_SETT_RAW" type="string"/>
+        <input name="IN_SETT_CCY" type="string"/>
+        <output name="OUT_TRADE_ID" type="string"/>
+        <output name="OUT_TRD_DT" type="date"/>
+        <output name="OUT_CP_CD" type="string"/>
+        <output name="OUT_SETT_AMT" type="decimal(18,2)"/>
+        <output name="OUT_SETT_CCY" type="string"/>
+      </ports>
+      <transforms>
+        <transform output="OUT_TRADE_ID">IN_TRADE_ID</transform>
+        <transform output="OUT_TRD_DT">IN_TRD_DT</transform>
+        <transform output="OUT_CP_CD">IN_CP_CD</transform>
+        <transform output="OUT_SETT_AMT">CAST(REPLACE(IN_SETT_RAW, ',', '') AS DECIMAL(18,2))</transform>
+        <transform output="OUT_SETT_CCY">IN_SETT_CCY</transform>
+      </transforms>
+    </component>
+    
+    <component name="APPLY_FEE" type="LOOKUP">
+      <ports>
+        <input name="IN_CP_CD" type="string"/>
+        <input name="IN_SETT_AMT" type="decimal(18,2)"/>
+        <output name="OUT_SETT_AMT" type="decimal(18,2)"/>
+        <output name="OUT_FEE_PCT" type="decimal(6,4)"/>
+      </ports>
+      <lookup table="FEE_SCHEDULE" key="CP_CD" fields="FEE_PCT"/>
+      <transforms>
+        <transform output="OUT_SETT_AMT">IN_SETT_AMT * (1 + NVL(FEE_PCT, 0))</transform>
+        <transform output="OUT_FEE_PCT">NVL(FEE_PCT, 0)</transform>
+      </transforms>
+    </component>
+    
+    <component name="OUTPUT_ENRICHED" type="OUTPUT_TABLE">
+      <ports>
+        <input name="TRADE_ID" type="string"/>
+        <input name="TRD_DT" type="date"/>
+        <input name="CP_CD" type="string"/>
+        <input name="SETT_AMT" type="decimal(18,2)"/>
+        <input name="SETT_CCY" type="string"/>
+        <input name="FEE_PCT" type="decimal(6,4)"/>
+      </ports>
+    </component>
+  </components>
+  
+  <connections>
+    <connection from="INPUT_TRADE.TRADE_ID" to="ENRICH_TRADE.IN_TRADE_ID"/>
+    <connection from="INPUT_TRADE.TRD_DT" to="ENRICH_TRADE.IN_TRD_DT"/>
+    <connection from="INPUT_TRADE.CP_CD" to="ENRICH_TRADE.IN_CP_CD"/>
+    <connection from="INPUT_TRADE.SETT_RAW" to="ENRICH_TRADE.IN_SETT_RAW"/>
+    <connection from="INPUT_TRADE.SETT_CCY" to="ENRICH_TRADE.IN_SETT_CCY"/>
+    
+    <connection from="ENRICH_TRADE.OUT_TRADE_ID" to="APPLY_FEE.IN_CP_CD"/>
+    <connection from="ENRICH_TRADE.OUT_SETT_AMT" to="APPLY_FEE.IN_SETT_AMT"/>
+    
+    <connection from="ENRICH_TRADE.OUT_TRADE_ID" to="OUTPUT_ENRICHED.TRADE_ID"/>
+    <connection from="ENRICH_TRADE.OUT_TRD_DT" to="OUTPUT_ENRICHED.TRD_DT"/>
+    <connection from="ENRICH_TRADE.OUT_CP_CD" to="OUTPUT_ENRICHED.CP_CD"/>
+    <connection from="APPLY_FEE.OUT_SETT_AMT" to="OUTPUT_ENRICHED.SETT_AMT"/>
+    <connection from="ENRICH_TRADE.OUT_SETT_CCY" to="OUTPUT_ENRICHED.SETT_CCY"/>
+    <connection from="APPLY_FEE.OUT_FEE_PCT" to="OUTPUT_ENRICHED.FEE_PCT"/>
+  </connections>
+</graph>

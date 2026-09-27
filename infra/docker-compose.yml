@@ -1,0 +1,107 @@
+# ISPSemanticWise Docker Compose
+# Development and production deployment
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # APPLICATION
+  # ==========================================
+  app:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: development
+    container_name: isp-semantic-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src:/app/src:ro
+      - ../config:/app/config:ro
+      - ../scripts:/app/scripts:ro
+      - ../tests:/app/tests:ro
+      - ../data:/app/data
+    environment:
+      - ENVIRONMENT=development
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - ORACLE_HOST=host.docker.internal
+      - ORACLE_PORT=1521
+      - ORACLE_SERVICE_NAME=ORCL
+      - ORACLE_USER=ISP_SEMANTIC_USER
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+    env_file:
+      - ../config/.env
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  # ==========================================
+  # VECTOR DATABASE (ChromaDB)
+  # ==========================================
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: isp-semantic-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ANONYMIZED_TELEMETRY=False
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ==========================================
+  # GRAPH DATABASE (Neo4j)
+  # ==========================================
+  neo4j:
+    image: neo4j:5.19
+    container_name: isp-semantic-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=2g
+      - NEO4J_dbms_memory_pagecache_size=1g
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
+
+networks:
+  default:
+    name: isp-semantic-network

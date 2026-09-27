@@ -1,0 +1,332 @@
+# Business Glossary Template
+## ISPSemanticWise - Standard Format
+
+### Instructions
+- One entry per business term
+- Use YAML format for machine readability
+- All fields required unless marked optional
+- Confidence score: 1-5 (5 = authoritative, 1 = tentative)
+- Validation status: draft/reviewed/validated/approved
+
+---
+
+## Template
+
+```yaml
+# Business Term Entry
+# --- REQUIRED FIELDS ---
+id: "uuid-v4"                    # Auto-generated unique identifier
+term: "Settlement Amount"        # Standard authoritative term
+synonyms:                        # List of all known synonyms/aliases
+  - "Settle Amount"
+  - "Settlement Amt"
+  - "SETT_AMT"
+  - "Settlement Value"
+definition: >                    # 2-3 sentence business definition
+  The final monetary amount to be settled for a trade after all 
+  adjustments, fees, and taxes have been applied. This is the amount 
+  that moves between counterparties on settlement date.
+category: "settlement"           # One of: trade, settlement, counterparty, risk, fee, ca, regulatory, general
+confidence_score: 5              # 1-5 scale (5=authoritative, validated by SME)
+source_system: "manual"          # Origin: manual, ab_initio, oracle, unix, jira, confluence, email
+
+# --- TECHNICAL MAPPINGS ---
+technical_mappings:
+  - source: "ab_initio"          # Source system
+    graph: "G_TRADE_ENRICH"      # Ab Initio graph name
+    port: "SETT_AMT"             # Port/field name
+    transform: "CAST(REPLACE(IN_SETT_RAW, ',', '') AS DECIMAL(18,2)) * (1 + NVL(FEE_PCT, 0))"
+    business_rule: "Fee schedule applied to raw settlement amount"
+    confidence: 5
+  - source: "oracle"             # Source system
+    table: "TRADE_ENRICHED"      # Table name
+    column: "SETT_AMT"           # Column name
+    type: "NUMBER(18,2)"         # Data type
+    description: "Enriched settlement amount with fees applied"
+    confidence: 5
+  - source: "oracle"
+    table: "RECON_RESULTS"
+    column: "ENRICHED_SETT_AMT"
+    type: "NUMBER(18,2)"
+    description: "Settlement amount used in reconciliation"
+    confidence: 5
+  - source: "oracle"
+    table: "CONFIRMATIONS"
+    column: "CONF_AMT"
+    type: "NUMBER(18,2)"
+    description: "Counterparty confirmed settlement amount"
+    confidence: 5
+  - source: "unix"
+    script: "pre_process_trades.ksh"
+    variable: "SETTLEMENT_AMOUNT"
+    transform: "awk gsub(/,/, '', \$5)"
+    confidence: 4
+
+# --- RELATIONSHIPS ---
+related_terms:
+  - "Settlement Date"
+  - "Settlement Currency"
+  - "Trade Amount"
+  - "Fee Percentage"
+  - "Break Code SAMT"
+  - "Confirmation Amount"
+
+# --- METADATA ---
+validation_status: "validated"   # draft, reviewed, validated, approved
+validated_by: "Jane Smith"       # SME name
+validated_at: "2026-01-15"       # ISO date
+created_at: "2026-01-10"
+updated_at: "2026-01-15"
+version: 1
+tags: ["settlement", "reconciliation", "revenue", "regulatory"]
+```
+
+---
+
+## Field Reference
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `id` | Yes | UUID v4 | Unique identifier |
+| `term` | Yes | String | Authoritative term name |
+| `synonyms` | Yes | List[String] | All known variants |
+| `definition` | Yes | String | 2-3 sentence business definition |
+| `category` | Yes | Enum | One of: trade, settlement, counterparty, risk, fee, ca, regulatory, general |
+| `confidence_score` | Yes | Integer 1-5 | 5=authoritative, 1=tentative |
+| `source_system` | Yes | String | Origin of term |
+| `technical_mappings` | Yes | List[Object] | See mapping structure below |
+| `related_terms` | No | List[String] | Related business terms |
+| `validation_status` | Yes | Enum | draft, reviewed, validated, approved |
+| `validated_by` | Yes | String | SME name |
+| `validated_at` | Yes | Date | ISO 8601 date |
+| `version` | Yes | Integer | Version number |
+| `tags` | No | List[String] | Searchable tags |
+
+### Technical Mapping Structure
+
+```yaml
+technical_mappings:
+  - source: "ab_initio|oracle|unix|pyspark|jira|confluence|email"
+    # For Ab Initio
+    graph: "G_TRADE_ENRICH"          # Graph name
+    port: "SETT_AMT"                 # Port name
+    transform: "CAST(REPLACE(...))"  # Transformation logic
+    business_rule: "Fee applied"     # Business meaning
+    
+    # For Oracle
+    table: "TRADE_ENRICHED"          # Table name
+    column: "SETT_AMT"               # Column name
+    type: "NUMBER(18,2)"             # Data type
+    
+    # For Unix
+    script: "pre_process_trades.ksh" # Script name
+    variable: "SETTLEMENT_AMOUNT"    # Variable name
+    transform: "awk gsub(...)"       # Extraction logic
+    
+    # Common
+    transform: "CAST(...) * (1+FEE)" # Transformation logic
+    business_rule: "Fee applied"     # Business meaning
+    confidence: 5                    # 1-5 confidence
+```
+
+---
+
+## Example Entries
+
+### Trade Date
+```yaml
+id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+term: "Trade Date"
+synonyms:
+  - "Trade Dt"
+  - "Trd Dt"
+  - "Transaction Date"
+  - "TDate"
+  - "Execution Date"
+definition: "The date on which the trade was executed and legally binding."
+category: "trade"
+confidence_score: 5
+source_system: "manual"
+technical_mappings:
+  - source: "ab_initio"
+    graph: "G_TRADE_CAPTURE"
+    port: "TRD_DT"
+    transform: "Pass-through"
+    business_rule: "No transformation, direct capture from SWIFT field 98A::TRAD"
+    confidence: 5
+  - source: "oracle"
+    table: "TRADE_CORE"
+    column: "TRD_DT"
+    type: "DATE"
+    description: "Trade execution date"
+    confidence: 5
+  - source: "unix"
+    script: "pre_process_trades.ksh"
+    variable: "TRADE_DATE"
+    transform: "date parsing from filename"
+    confidence: 4
+related_terms:
+  - "Settlement Date"
+  - "Value Date"
+  - "Confirmation Date"
+  - "Trade ID"
+category: "trade"
+validation_status: "validated"
+validated_by: "John Doe"
+validated_at: "2026-01-15"
+version: 1
+tags: ["trade", "regulatory", "CSDR"]
+```
+
+### Counterparty
+```yaml
+id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+term: "Counterparty"
+synonyms:
+  - "Counter Party"
+  - "CP"
+  - "Cpty"
+  - "CP_CD"
+  - "Contraparty"
+  - "Contra Party"
+definition: "The legal entity on the opposite side of a trade with whom settlement occurs."
+category: "counterparty"
+confidence_score: 5
+source_system: "manual"
+technical_mappings:
+  - source: "ab_initio"
+    graph: "G_TRADE_CAPTURE"
+    port: "CP_CD"
+    transform: "Direct mapping"
+    confidence: 5
+  - source: "oracle"
+    table: "TRADE_CORE"
+    column: "CP_CD"
+    type: "VARCHAR2(20)"
+    confidence: 5
+  - source: "oracle"
+    table: "COUNTERPARTY"
+    column: "CP_CD"
+    type: "VARCHAR2(20)"
+    confidence: 5
+  - source: "unix"
+    script: "pre_process_trades.ksh"
+    variable: "COUNTERPARTY_CODE"
+    transform: "awk extraction"
+    confidence: 4
+related_terms:
+  - "Counterparty ID"
+  - "SSI (Standard Settlement Instructions)"
+  - "Fee Schedule"
+  - "Break Code CPID"
+  - "Settlement Instruction"
+category: "counterparty"
+validation_status: "validated"
+validated_by: "Jane Smith"
+validated_at: "2026-01-15"
+version: 1
+tags: ["counterparty", "SSI", "regulatory"]
+```
+
+### Break Code SAMT
+```yaml
+id: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+term: "Break Code SAMT"
+synonyms:
+  - "SAMT"
+  - "Settlement Amount Mismatch"
+  - "Settle Amount Break"
+  - "Amount Break"
+definition: "Reconciliation break code indicating the enriched settlement amount differs from the counterparty confirmation amount beyond tolerance."
+category: "reconciliation"
+confidence_score: 5
+source_system: "manual"
+technical_mappings:
+  - source: "oracle"
+    table: "RECON_RESULTS"
+    column: "BREAK_CODE"
+    type: "VARCHAR2(10)"
+    confidence: 5
+  - source: "oracle"
+    table: "RECON_RESULTS"
+    column: "DIFF_AMT"
+    type: "NUMBER(18,2)"
+    description: "Difference between enriched and confirmed amounts"
+    confidence: 5
+  - source: "ab_initio"
+    graph: "G_RECON_CALC"
+    port: "BREAK_CD"
+    transform: "CASE WHEN ABS(ENRICHED_SETT_AMT - CONF_AMT) > 0.01 THEN 'SAMT'"
+    confidence: 5
+related_terms:
+  - "Settlement Amount"
+  - "Confirmation Amount"
+  - "Fee Percentage"
+  - "Reconciliation"
+  - "Break Resolution"
+category: "reconciliation"
+validation_status: "validated"
+validated_by: "John Doe"
+validated_at: "2026-01-15"
+version: 1
+tags: ["reconciliation", "break", "SAMT", "amount"]
+```
+
+---
+
+## Validation Rules
+
+1. **Term uniqueness**: `term` must be unique across glossary
+2. **Synonyms uniqueness**: No synonym should appear in another term's synonyms
+3. **Technical mapping completeness**: At least one mapping per source system in scope
+4. **Confidence threshold**: Minimum 3 for production use
+5. **Validation workflow**: draft → reviewed → validated → approved
+5. **Cross-reference integrity**: All `related_terms` must exist in glossary
+
+---
+
+## Import/Export
+
+### Import Command
+```bash
+python scripts/import_glossary.py --file glossary.yaml --validate
+```
+
+### Export Command
+```bash
+python scripts/export_glossary.py --format yaml --output glossary_export.yaml
+```
+
+### Validation Script
+```python
+# validate_glossary.py
+def validate_glossary(glossary: list) -> list:
+    errors = []
+    terms = {item['term'] for item in glossary}
+    synonyms = set()
+    
+    for item in glossary:
+        # Check term uniqueness
+        if item['term'] in terms - {item['term']}:
+            errors.append(f"Duplicate term: {item['term']}")
+        
+        # Check synonyms uniqueness
+        for syn in item.get('synonyms', []):
+            if syn in synonyms:
+                errors.append(f"Duplicate synonym: {syn}")
+            synonyms.add(syn)
+        
+        # Check technical mappings
+        if not item.get('technical_mappings'):
+            errors.append(f"No technical mappings for {item['term']}")
+        
+        # Check confidence
+        if item.get('confidence_score', 0) < 3:
+            errors.append(f"Low confidence for {item['term']}: {item['confidence_score']}")
+        
+        # Check validation status
+        if item.get('validation_status') not in ['draft', 'reviewed', 'validated', 'approved']:
+            errors.append(f"Invalid validation_status for {item['term']}")
+    
+    return errors
+```

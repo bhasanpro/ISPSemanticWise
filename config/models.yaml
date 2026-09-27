@@ -1,0 +1,254 @@
+# ISPSemanticWise Model Routing Configuration
+# Defines model tiers, routing rules, and provider settings
+
+# ==========================================
+# TIER 1: Small/Cheap Models (Fast, Cost-Effective)
+# ==========================================
+tier_1:
+  name: "tier_1_fast"
+  description: "Fast, cost-effective models for structured tasks"
+  models:
+    - id: "meta/llama-3.2-11b-vision-instruct"
+      provider: "nvidia"
+      display_name: "Llama 3.2 11B Vision Instruct"
+      context_window: 128000
+      max_output_tokens: 4096
+      pricing_per_1k_tokens: 0.0001  # Approximate
+      capabilities:
+        - tool_calling
+        - structured_output
+        - nl2sql
+        - entity_extraction
+        - query_routing
+        - lineage_traversal
+    - id: "microsoft/phi-3.5-mini-instruct"
+      provider: "nvidia"
+      display_name: "Phi-3.5 Mini Instruct"
+      context_window: 128000
+      max_output_tokens: 4096
+      pricing_per_1k_tokens: 0.00005
+      capabilities:
+        - tool_calling
+        - nl2sql
+        - query_routing
+        - entity_extraction
+    - id: "mistralai/mistral-7b-instruct-v0.3"
+      provider: "nvidia"
+      display_name: "Mistral 7B Instruct v0.3"
+      context_window: 32768
+      max_output_tokens: 4096
+      pricing_per_1k_tokens: 0.0001
+      capabilities:
+        - tool_calling
+        - nl2sql
+        - structured_output
+
+  default_model: "meta/llama-3.2-11b-vision-instruct"
+  max_tokens: 2000
+  temperature: 0.1
+  top_p: 0.9
+  timeout_seconds: 30
+
+  # Use cases that route to Tier 1
+  use_cases:
+    - nl2sql
+    - query_routing
+    - intent_classification
+    - entity_extraction
+    - lineage_traversal
+    - query_validation
+    - sql_sanitization
+    - real_time_chat
+
+# ==========================================
+# TIER 2: High-End Models (Reasoning, Generation)
+# ==========================================
+tier_2:
+  name: "tier_2_reasoning"
+  description: "High-capability models for complex reasoning and generation"
+  models:
+    - id: "nvidia/nemotron-3-super-120b-a12b"
+      provider: "nvidia"
+      display_name: "Nemotron 3 Super 120B"
+      context_window: 128000
+      max_output_tokens: 8192
+      pricing_per_1k_tokens: 0.001  # Approximate
+      capabilities:
+        - code_understanding
+        - glossary_generation
+        - root_cause_narrative
+        - impact_analysis
+        - complex_reasoning
+        - documentation_generation
+        - multi_hop_reasoning
+    - id: "nvidia/nemotron-3-ultra-550b-a55b"
+      provider: "nvidia"
+      display_name: "Nemotron 3 Ultra 550B"
+      context_window: 128000
+      max_output_tokens: 8192
+      pricing_per_1k_tokens: 0.002
+      capabilities:
+        - code_understanding
+        - glossary_generation
+        - root_cause_narrative
+        - impact_analysis
+        - complex_reasoning
+        - documentation_generation
+    - id: "nvidia/llama-3.1-nemotron-70b-instruct"
+      provider: "nvidia"
+      display_name: "Llama 3.1 Nemotron 70B"
+      context_window: 128000
+      max_output_tokens: 8192
+      pricing_per_1k_tokens: 0.0008
+      capabilities:
+        - code_understanding
+        - glossary_generation
+        - root_cause_narrative
+        - impact_analysis
+
+  default_model: "nvidia/nemotron-3-super-120b-a12b"
+  max_tokens: 4000
+  temperature: 0.3
+  top_p: 0.95
+  timeout_seconds: 120
+
+  # Use cases that route to Tier 2
+  use_cases:
+    - code_understanding
+    - glossary_generation
+    - root_cause_narrative
+    - impact_analysis
+    - change_analysis
+    - documentation_generation
+    - multi_hop_reasoning
+    - complex_synthesis
+    - batch_processing
+
+# ==========================================
+# HYBRID: Services that use both tiers
+# ==========================================
+hybrid:
+  name: "hybrid_services"
+  description: "Services that intelligently combine both tiers"
+  services:
+    - name: "trade_match_debugger"
+      tier_1_tasks:
+        - lineage_traversal
+        - entity_extraction
+        - sql_generation
+      tier_2_tasks:
+        - mismatch_analysis
+        - narrative_generation
+        - recommendation_synthesis
+      routing_logic: |
+        Use Tier 1 for lineage lookup and SQL generation.
+        Pass results to Tier 2 for mismatch analysis and narrative.
+
+    - name: "value_reconciler"
+      tier_1_tasks:
+        - column_mapping_lookup
+        - transformation_chain_traversal
+        - discrepancy_detection
+      tier_2_tasks:
+        - root_cause_analysis
+        - business_impact_assessment
+        - remediation_recommendation
+
+    - name: "incident_narrator"
+      tier_1_tasks:
+        - error_log_parsing
+        - trace_extraction
+        - entity_linking
+      tier_2_tasks:
+        - narrative_generation
+        - root_cause_synthesis
+        - prevention_recommendation
+
+# ==========================================
+# ROUTING RULES
+# ==========================================
+routing:
+  # Keywords that trigger Tier 2
+  tier_2_keywords:
+    - "explain"
+    - "why"
+    - "root cause"
+    - "impact"
+    - "analyze"
+    - "generate glossary"
+    - "document"
+    - "narrative"
+    - "recommend"
+    - "assess"
+    - "synthesize"
+
+  # Keywords that trigger Tier 1
+  tier_1_keywords:
+    - "show"
+    - "list"
+    - "find"
+    - "search"
+    - "query"
+    - "lineage"
+    - "trace"
+    - "map"
+    - "column"
+    - "table"
+    - "procedure"
+
+  # Default tier for ambiguous queries
+  default_tier: "tier_1"
+
+  # Confidence threshold for auto-routing
+  confidence_threshold: 0.7
+
+# ==========================================
+# PROVIDER CONFIGURATIONS
+# ==========================================
+providers:
+  nvidia:
+    base_url: "https://integrate.api.nvidia.com/v1"
+    api_key_env: "NVIDIA_API_KEY"
+    default_headers:
+      "Content-Type": "application/json"
+    rate_limit:
+      requests_per_minute: 60
+      tokens_per_minute: 100000
+
+  # local:
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key_env: ""
+  #   models:
+  #     - "phi3:mini"
+  #     - "llama3.2:11b"
+  #     - "nemotron3:super"
+
+# ==========================================
+# MODEL EVALUATION SETTINGS
+# ==========================================
+evaluation:
+  test_suites:
+    - name: "nl2sql"
+      tier: "tier_1"
+      test_file: "tests/fixtures/eval/nl2sql_testset.json"
+      metrics: ["exact_match", "execution_accuracy", "valid_sql"]
+    - name: "glossary_generation"
+      tier: "tier_2"
+      test_file: "tests/fixtures/eval/glossary_testset.json"
+      metrics: ["precision", "recall", "f1", "hallucination_rate"]
+    - name: "root_cause_narrative"
+      tier: "tier_2"
+      test_file: "tests/fixtures/eval/narrative_testset.json"
+      metrics: ["accuracy", "completeness", "actionability"]
+    - name: "impact_analysis"
+      tier: "tier_2"
+      test_file: "tests/fixtures/eval/impact_testset.json"
+      metrics: ["precision", "recall", "risk_score_accuracy"]
+
+  # Evaluation model (for LLM-as-judge)
+  judge_model:
+    id: "nvidia/nemotron-3-super-120b-a12b"
+    provider: "nvidia"
+
+  # Run evaluation on schedule
+  schedule: "0 2 * * *"  # Daily at 2 AM
