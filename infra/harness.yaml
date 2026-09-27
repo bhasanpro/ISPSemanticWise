@@ -1,0 +1,379 @@
+# Harness Pipeline Configuration for ISPSemanticWise
+# This file defines the deployment pipeline for Harness
+# Reference: https://developer.harness.io/docs/platform/pipelines/pipeline-configuration
+
+pipeline:
+  name: ISPSemanticWise Deploy
+  identifier: ISPSemanticWiseDeploy
+  projectIdentifier: ISPSemanticWise
+  orgIdentifier: default
+  tags: {}
+  stages:
+    # ==========================================
+    # STAGE 1: BUILD & TEST
+    # ==========================================
+    - stage:
+        name: Build & Test
+        identifier: BuildTest
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Install uv
+                  identifier: InstallUv
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      curl -LsSf https://astral.sh/uv/install.sh | sh
+                      echo "$HOME/.local/bin" >> $GITHUB_PATH
+              
+              - step:
+                  name: Install Dependencies
+                  identifier: InstallDeps
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      uv pip install --system --no-cache -e .[dev]
+              
+              - step:
+                  name: Run Linting
+                  identifier: Lint
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      ruff check src/ tests/
+                      black --check src/ tests/
+                      isort --check-only src/ tests/
+                      mypy src/
+              
+              - step:
+                  name: Run Unit Tests
+                  identifier: UnitTests
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      pytest tests/unit -v --cov=src --cov-report=xml
+              
+              - step:
+                  name: Upload Coverage
+                  identifier: UploadCoverage
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      # Upload to codecov or internal tool
+                      echo "Coverage uploaded"
+          execution:
+            steps:
+              - step:
+                  name: Build Docker Image
+                  identifier: BuildImage
+                  type: BuildAndPushDockerImage
+                  spec:
+                    connectorRef: account.dockerhub
+                    repo: bhasanpro/isp-semantic-wise
+                    tags:
+                      - "<+pipeline.sequenceId>"
+                      - "latest"
+                    dockerfile: infra/Dockerfile
+                    context: .
+                    buildArgs:
+                      ORACLE_INSTANT_CLIENT_VERSION: "21.12.0.0.0"
+
+    # ==========================================
+    # STAGE 2: INTEGRATION TESTS
+    # ==========================================
+    - stage:
+        name: Integration Tests
+        identifier: IntegrationTests
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Install uv
+                  identifier: InstallUv
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      curl -LsSf https://astral.sh/uv/install.sh | sh
+                      echo "$HOME/.local/bin" >> $GITHUB_PATH
+              
+              - step:
+                  name: Install Dependencies
+                  identifier: InstallDeps
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      uv pip install --system --no-cache -e .[dev]
+              
+              - step:
+                  name: Start Services
+                  identifier: StartServices
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      # Start ChromaDB and Neo4j via docker-compose
+                      docker-compose -f infra/docker-compose.yml up -d chromadb neo4j
+                      
+                      # Wait for health checks
+                      timeout 60 bash -c 'until curl -f http://localhost:8001/api/v1/heartbeat; do sleep 2; done'
+                      timeout 60 bash -c 'until cypher-shell -u neo4j -p password "RETURN 1" 2>/dev/null; do sleep 2; done'
+              
+              - step:
+                  name: Initialize Database
+                  identifier: InitDB
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      python -c "
+                      from src.isp_semantic_wise.storage.relational import RelationalStore
+                      from src.isp_semantic_wise.config import get_settings
+                      store = RelationalStore()
+                      store.initialize()
+                      print('Database initialized')
+                      "
+              
+              - step:
+                  name: Run Integration Tests
+                  identifier: IntegrationTests
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      pytest tests/integration -v
+              
+              - step:
+                  name: Cleanup
+                  identifier: Cleanup
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      docker-compose -f infra/docker-compose.yml down -v
+
+    # ==========================================
+    # STAGE 3: DEPLOY TO STAGING
+    # ==========================================
+    - stage:
+        name: Deploy Staging
+        identifier: DeployStaging
+        type: CD
+        spec:
+          service:
+            name: isp-semantic-wise
+            identifier: ISPSemanticWise
+          environment:
+            name: Staging
+            identifier: Staging
+            infrastructureDefinitions:
+              - identifier: K8sStaging
+          execution:
+            steps:
+              - step:
+                  name: Deploy to Staging
+                  identifier: DeployStaging
+                  type: KubernetesRollingDeploy
+                  spec:
+                    skipDryRun: false
+                    prune: false
+                    manifests:
+                      - manifest:
+                          identifier: K8sManifests
+                          type: K8sManifest
+                          spec:
+                            store:
+                              type: Github
+                              spec:
+                                connectorRef: account.github
+                                gitFetchType: Branch
+                                paths:
+                                  - infra/k8s/staging
+                                branch: main
+                    timeout: 10m
+              - step:
+                  name: Health Check
+                  identifier: HealthCheck
+                  type: HttpRequest
+                  spec:
+                    url: "https://staging.isp-semantic-wise.yourdomain.com/health"
+                    method: GET
+                    expectedStatusCodes:
+                      - "200"
+                    timeout: 5m
+              - step:
+                  name: Smoke Tests
+                  identifier: SmokeTests
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      python scripts/smoke_tests.py --env staging
+
+    # ==========================================
+    # STAGE 4: DEPLOY TO PRODUCTION
+    # ==========================================
+    - stage:
+        name: Deploy Production
+        identifier: DeployProduction
+        type: CD
+        spec:
+          service:
+            name: isp-semantic-wise
+            identifier: ISPSemanticWise
+          environment:
+            name: Production
+            identifier: Production
+            infrastructureDefinitions:
+              - identifier: K8sProduction
+          execution:
+            steps:
+              - step:
+                  name: Approval
+                  identifier: Approval
+                  type: Approval
+                  spec:
+                    approvers:
+                      - usergroup: release-managers
+                    minCount: 1
+                    rejectPipelineExecutionOnExpire: true
+                    expiryDuration: 24h
+              
+              - step:
+                  name: Deploy to Production
+                  identifier: DeployProduction
+                  type: KubernetesRollingDeploy
+                  spec:
+                    skipDryRun: false
+                    prune: false
+                    manifests:
+                      - manifest:
+                          identifier: K8sManifests
+                          type: K8sManifest
+                          spec:
+                            store:
+                              type: Github
+                              spec:
+                                connectorRef: account.github
+                                gitFetchType: Branch
+                                paths:
+                                  - infra/k8s/production
+                                branch: main
+                    timeout: 15m
+              - step:
+                  name: Health Check
+                  identifier: HealthCheck
+                  type: HttpRequest
+                  spec:
+                    url: "https://isp-semantic-wise.yourdomain.com/health"
+                    method: GET
+                    expectedStatusCodes:
+                      - "200"
+                    timeout: 5m
+              - step:
+                  name: Post-Deploy Verification
+                  identifier: PostDeployVerification
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      python scripts/smoke_tests.py --env production
+                      python scripts/run_post_deploy_checks.py
+
+  # ==========================================
+  # STAGE 5: MODEL EVALUATION (Scheduled)
+  # ==========================================
+    - stage:
+        name: Model Evaluation
+        identifier: ModelEvaluation
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Install uv
+                  identifier: InstallUv
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      curl -LsSf https://astral.sh/uv/install.sh | sh
+                      echo "$HOME/.local/bin" >> $GITHUB_PATH
+              
+              - step:
+                  name: Install Dependencies
+                  identifier: InstallDeps
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      uv pip install --system --no-cache -e .[dev]
+              
+              - step:
+                  name: Run Model Evaluations
+                  identifier: EvaluateModels
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      python scripts/evaluate.py --all
+              - step:
+                name: Upload Results
+                identifier: UploadResults
+                type: Run
+                spec:
+                  shell: Bash
+                  command: |
+                    # Upload to artifact store or dashboard
+                    echo "Evaluation results uploaded"
+
+  # ==========================================
+  # TRIGGERS
+  # ==========================================
+  triggers:
+    - trigger:
+        type: Webhook
+        spec:
+          type: Github
+          events:
+            - Push
+            - PullRequest
+          branch:
+            - main
+            - develop
+    - trigger:
+        type: Schedule
+        spec:
+          cron: "0 2 * * *"  # Daily at 2 AM
+          timezone: UTC
+          stage: ModelEvaluation

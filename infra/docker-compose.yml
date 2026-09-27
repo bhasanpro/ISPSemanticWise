@@ -1,5 +1,6 @@
 # ISPSemanticWise Docker Compose
-# Development and production deployment
+# LOCAL DEVELOPMENT ONLY - Production uses GitHub Actions/Harness pipeline
+# Run: docker-compose -f infra/docker-compose.yml up -d
 
 version: '3.8'
 

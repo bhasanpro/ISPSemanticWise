@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-POC-orange.svg)]()
+[![CI/CD](https://github.com/bhasanpro/ISPSemanticWise/actions/workflows/ci-cd.yml/badge.svg)]()
 
 ---
 
@@ -62,11 +63,13 @@ Answer: "Fee schedule for GS (0.05%) applied in enrichment
 
 ### Prerequisites
 - Python 3.11+
-- Docker & Docker Compose
-- NVIDIA API Key (for Tier 2 models) or local Ollama
-- Oracle Database access (19c/21c/23c)
+- **Oracle Database** access (19c/21c/23c) - enterprise provided
+- **NVIDIA API Key** (for Tier 2 models) or local Ollama
+- **GitHub Actions** for CI/CD
+- **Harness** for production deployment
+- **Docker** (optional - for local ChromaDB/Neo4j only)
 
-### Installation
+### Local Development Setup
 ```bash
 # Clone
 git clone https://github.com/bhasanpro/ISPSemanticWise.git
@@ -76,12 +79,15 @@ cd ISPSemanticWise
 cp config/.env.example config/.env
 # Edit config/.env with your keys (NVIDIA_API_KEY, ORACLE_PASSWORD, SECRET_KEY)
 
-# Install dependencies with uv (10-100x faster than pip)
+# Install uv (10-100x faster than pip)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
+
+# Install dependencies with uv
 uv pip install --system --no-cache -e .[dev]
 
-# Start services (ChromaDB + Neo4j)
+# Start local services (optional - for local development only)
+# ChromaDB + Neo4j for local development
 docker-compose -f infra/docker-compose.yml up -d
 
 # Initialize Oracle schema (run as DBA)
@@ -94,10 +100,60 @@ python scripts/ingest_sample.py
 python -m isp_semantic_wise.api.main
 ```
 
-### Access Points
+### Access Points (Local Development)
 - **API**: http://localhost:8000/docs
 - **UI**: http://localhost:3000 (if UI enabled)
 - **Graph DB**: http://localhost:7474 (Neo4j Browser)
+
+---
+
+## 🚀 CI/CD & Deployment (GitHub Actions + Harness)
+
+### Pipeline Overview
+```
+┌─────────────┐   ┌──────────────┐   ┌─────────────┐   ┌─────────────────┐
+│  Push/PR    │──►│ Lint & Test  │──►│ Integration │──►│ Build & Push    │
+│  to main    │   │ (GitHub)     │   │ Tests       │   │ Docker Image    │
+└─────────────┘   └──────────────┘   └─────────────┘   └────────┬────────┘
+                                                                   │
+                                                       ┌───────────▼───────────┐
+                                                       │ Trigger Harness       │
+                                                       │ Staging Pipeline      │
+                                                       └───────────┬───────────┘
+                                                                     │
+                                                           ┌─────────▼──────────┐
+                                                           │ Manual Approval    │
+                                                           │ → Harness Prod     │
+                                                           └────────────────────┘
+```
+
+### GitHub Actions (CI)
+- **Lint & Test**: Ruff, MyPy, Black, isort, pytest unit tests
+- **Integration Tests**: ChromaDB, Neo4j, Oracle connectivity
+- **Build & Push**: Docker image to Docker Hub on merge to main
+
+### Harness (CD)
+- **Staging**: Auto-deployed on merge to main
+- **Production**: Manual approval via Harness UI
+- **Model Evaluation**: Scheduled daily via GitHub Actions schedule
+
+### Required GitHub Secrets
+| Secret | Purpose |
+|--------|---------|
+| `NVIDIA_API_KEY` | Tier 2 model access |
+| `ORACLE_PASSWORD` | Oracle DB password |
+| `ORACLE_HOST` | Oracle DB host |
+| `ORACLE_PORT` | Oracle DB port (1521) |
+| `ORACLE_SERVICE_NAME` | Oracle service name |
+| `ORACLE_USER` | Oracle user |
+| `SECRET_KEY` | JWT signing key |
+| `NVIDIA_API_KEY` | NVIDIA API key |
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub token |
+| `HARNESS_API_KEY` | Harness API key |
+| `HARNESS_ACCOUNT_ID` | Harness account ID |
+| `HARNESS_ORG_ID` | Harness org ID |
+| `HARNESS_PROJECT_ID` | Harness project ID |
 
 ---
 
@@ -115,49 +171,29 @@ ISPSemanticWise/
 │   ├── sme/                # SME interview guides, glossaries
 │   └── adr/                # Architecture Decision Records
 ├── infra/                  # Infrastructure as Code
-│   ├── docker-compose.yml
-│   ├── Dockerfile
-│   └── k8s/                # Kubernetes manifests (future)
+│   ├── docker-compose.yml  # Local dev only (ChromaDB + Neo4j)
+│   ├── Dockerfile          # Build image for Harness
+│   ├── harness.yaml        # Harness pipeline definition
+│   └── k8s/                # Kubernetes manifests (for Harness)
 ├── scripts/                # Operational scripts
-│   ├── setup.sh
 │   ├── ingest_sample.py
 │   ├── run_ingestion.py
 │   └── evaluate.py
 ├── src/
 │   ├── ingestion/          # Source connectors
-│   │   ├── ab_initio/      # Ab Initio XML/GraphML parser
-│   │   ├── oracle/         # PL/SQL parser, schema extractor
-│   │   ├── unix/           # Shell script parser
-│   │   ├── email/          # Email thread parser
-│   │   ├── jira/           # Jira/Confluence connector
-│   │   └── networkx/       # NetworkX graph sync
 │   ├── processing/         # Processing pipeline
-│   │   ├── parsers/        # Tree-sitter based parsers
-│   │   ├── chunkers/       # Semantic chunking strategies
-│   │   ├── embedders/      # Embedding generation
-│   │   └── linkers/        # Entity linking & resolution
 │   ├── services/           # Semantic services (Tier 1/2)
-│   │   ├── glossary/       # Business glossary builder
-│   │   ├── nl2sql/         # NL→SQL translator
-│   │   ├── debugger/       # Trade match debugger
-│   │   ├── narrator/       # Root cause narrator
-│   │   ├── impact/         # Impact analyzer
-│   │   └── router.py       # Model tier routing
 │   ├── storage/            # Storage adapters
-│   │   ├── vector.py       # Chroma/Pinecone/Weaviate
-│   │   ├── graph.py        # Neo4j/NetworkX
-│   │   └── relational.py   # Oracle metadata
 │   ├── api/                # FastAPI REST API
-│   │   ├── routes/         # API endpoints
-│   │   ├── schemas/        # Pydantic models
-│   │   └── main.py         # App entry point
 │   └── ui/                 # Frontend (React/Streamlit)
 ├── tests/
-│   ├── unit/               # Unit tests
-│   ├── integration/        # Integration tests
-│   └── fixtures/           # Sample data (Ab Initio, SQL, Shell)
-└── .github/
-    └── workflows/          # CI/CD pipelines
+│   ├── unit/
+│   ├── integration/
+│   └── fixtures/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml       # GitHub Actions CI/CD
+└── README.md
 ```
 
 ---
@@ -169,17 +205,17 @@ ISPSemanticWise/
 # NVIDIA API (Tier 2 models)
 NVIDIA_API_KEY=your_key_here
 
-# Vector DB
+# Vector DB (ChromaDB - local dev uses docker-compose)
 CHROMA_HOST=localhost
 CHROMA_PORT=8000
 
-# Graph DB
+# Graph DB (Neo4j - local dev uses docker-compose)
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
 
-# Relational DB (Oracle)
-ORACLE_HOST=localhost
+# Relational DB (Oracle - enterprise provided)
+ORACLE_HOST=your-oracle-host
 ORACLE_PORT=1521
 ORACLE_SERVICE_NAME=ORCL
 ORACLE_USER=ISP_SEMANTIC_USER
@@ -190,31 +226,6 @@ TIER1_MODEL=meta/llama-3.2-11b-vision-instruct
 TIER2_MODEL=nvidia/nemotron-3-super-120b-a12b
 ```
 
-### Model Routing (`config/models.yaml`)
-```yaml
-tier_1:
-  model: "meta/llama-3.2-11b-vision-instruct"
-  provider: "nvidia"
-  use_cases:
-    - nl2sql
-    - query_routing
-    - entity_extraction
-    - lineage_traversal
-  max_tokens: 2000
-  temperature: 0.1
-
-tier_2:
-  model: "nvidia/nemotron-3-super-120b-a12b"
-  provider: "nvidia"
-  use_cases:
-    - code_understanding
-    - glossary_generation
-    - root_cause_narrative
-    - impact_analysis
-  max_tokens: 4000
-  temperature: 0.3
-```
-
 ---
 
 ## 🧪 Testing
@@ -223,7 +234,7 @@ tier_2:
 # Unit tests
 pytest tests/unit -v
 
-# Integration tests
+# Integration tests (requires ChromaDB, Neo4j, Oracle)
 pytest tests/integration -v
 
 # With coverage
@@ -243,6 +254,7 @@ python scripts/evaluate.py --suite glossary
 | [SME Interview Guide](docs/sme/INTERVIEW_GUIDE.md) | Questions for domain experts |
 | [Glossary Template](docs/sme/GLOSSARY_TEMPLATE.yaml) | Standard glossary format |
 | [ADR Index](docs/adr/README.md) | Architecture Decision Records |
+| [Harness Pipeline](infra/harness.yaml) | Harness pipeline definition |
 
 ---
 
