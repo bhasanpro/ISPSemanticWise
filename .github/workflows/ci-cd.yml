@@ -13,6 +13,11 @@ on:
 env:
   PYTHON_VERSION: '3.11'
   NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
+  ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+  ORACLE_PORT: ${{ secrets.ORACLE_PORT }}
+  ORACLE_SERVICE_NAME: ${{ secrets.ORACLE_SERVICE_NAME }}
+  ORACLE_USER: ${{ secrets.ORACLE_USER }}
 
 jobs:
   lint-and-test:
@@ -27,12 +32,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: 'pip'  # pip cache for uv's pip-compatible cache
+      
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -e .[dev]
+          uv pip install --system --no-cache -e .[dev]
       
       - name: Run linting (ruff)
         run: ruff check src/ tests/
@@ -61,20 +70,6 @@ jobs:
     needs: lint-and-test
     
     services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: isp_semantic
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres -d isp_semantic"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-      
       chromadb:
         image: chromadb/chroma:0.4.24
         ports:
@@ -98,7 +93,7 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
-      
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,10 +104,14 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
       
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -e .[dev]
+          uv pip install --system --no-cache -e .[dev]
       
       - name: Initialize database
         run: |
@@ -125,20 +124,20 @@ jobs:
           print('Database initialized')
           "
         env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_DB: isp_semantic
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          ORACLE_PORT: ${{ secrets.ORACLE_PORT }}
+          ORACLE_SERVICE_NAME: ${{ secrets.ORACLE_SERVICE_NAME }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
       
       - name: Run integration tests
         run: pytest tests/integration -v
         env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_DB: isp_semantic
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          ORACLE_PORT: ${{ secrets.ORACLE_PORT }}
+          ORACLE_SERVICE_NAME: ${{ secrets.ORACLE_SERVICE_NAME }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
           CHROMA_HOST: localhost
           CHROMA_PORT: 8000
           NEO4J_URI: bolt://localhost:7687
@@ -161,10 +160,14 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
       
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -e .[dev]
+          uv pip install --system --no-cache -e .[dev]
       
       - name: Run model evaluations
         run: python scripts/evaluate.py --all

@@ -64,28 +64,34 @@ Answer: "Fee schedule for GS (0.05%) applied in enrichment
 - Python 3.11+
 - Docker & Docker Compose
 - NVIDIA API Key (for Tier 2 models) or local Ollama
+- Oracle Database access (19c/21c/23c)
 
 ### Installation
 ```bash
 # Clone
-git clone https://github.com/your-org/ISPSemanticWise.git
+git clone https://github.com/bhasanpro/ISPSemanticWise.git
 cd ISPSemanticWise
 
 # Setup environment
 cp config/.env.example config/.env
-# Edit config/.env with your keys
+# Edit config/.env with your keys (NVIDIA_API_KEY, ORACLE_PASSWORD, SECRET_KEY)
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with uv (10-100x faster than pip)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv pip install --system --no-cache -e .[dev]
 
-# Start services
-docker-compose up -d
+# Start services (ChromaDB + Neo4j)
+docker-compose -f infra/docker-compose.yml up -d
+
+# Initialize Oracle schema (run as DBA)
+# sqlplus sys/password@ORCL as sysdba @scripts/init_db.sql
 
 # Run ingestion (sample data)
 python scripts/ingest_sample.py
 
 # Start API
-python -m src.api.main
+python -m isp_semantic_wise.api.main
 ```
 
 ### Access Points
@@ -140,7 +146,7 @@ ISPSemanticWise/
 │   ├── storage/            # Storage adapters
 │   │   ├── vector.py       # Chroma/Pinecone/Weaviate
 │   │   ├── graph.py        # Neo4j/NetworkX
-│   │   └── relational.py   # PostgreSQL metadata
+│   │   └── relational.py   # Oracle metadata
 │   ├── api/                # FastAPI REST API
 │   │   ├── routes/         # API endpoints
 │   │   ├── schemas/        # Pydantic models
@@ -172,8 +178,12 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
 
-# Relational DB
-POSTGRES_DSN=postgresql://user:pass@localhost:5432/isp_semantic
+# Relational DB (Oracle)
+ORACLE_HOST=localhost
+ORACLE_PORT=1521
+ORACLE_SERVICE_NAME=ORCL
+ORACLE_USER=ISP_SEMANTIC_USER
+ORACLE_PASSWORD=your_oracle_password
 
 # Model Routing
 TIER1_MODEL=meta/llama-3.2-11b-vision-instruct

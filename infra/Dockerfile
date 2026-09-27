@@ -1,5 +1,5 @@
 # ISPSemanticWise Dockerfile
-# Multi-stage build for production
+# Multi-stage build for production using uv
 
 # ==========================================
 # BASE STAGE
@@ -30,22 +30,25 @@ RUN mkdir -p /opt/oracle && \
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_21_12:$LD_LIBRARY_PATH
 ENV ORACLE_HOME=/opt/oracle/instantclient_21_12
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
 # Set working directory
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy dependency files
+COPY requirements.txt requirements-dev.txt ./
+
+# Install dependencies with uv (much faster than pip)
+RUN uv pip install --system --no-cache -r requirements.txt
 
 # ==========================================
 # DEVELOPMENT STAGE
 # ==========================================
 FROM base as development
 
-# Install dev dependencies
-COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+# Install dev dependencies with uv
+RUN uv pip install --system --no-cache -r requirements-dev.txt
 
 # Copy source code
 COPY src/ ./src/
@@ -72,8 +75,8 @@ COPY config/ ./config/
 COPY pyproject.toml .
 COPY README.md .
 
-# Install package
-RUN pip install --no-cache-dir -e .
+# Install package with uv
+RUN uv pip install --system --no-cache -e .
 
 # ==========================================
 # PRODUCTION STAGE
