@@ -1,7 +1,6 @@
 """
-Vector Store - ChromaDB/Pinecone/Weaviate abstraction
+Vector Store - ChromaDB abstraction for semantic search
 """
-
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
@@ -12,15 +11,9 @@ try:
 except ImportError:
     CHROMA_AVAILABLE = False
 
-try:
-    import pinecone
-    PINECONE_AVAILABLE = True
-except ImportError:
-    PINECONE_AVAILABLE = False
-
 
 class VectorStore:
-    """Abstract vector store with multiple backend support"""
+    """Vector store abstraction with ChromaDB backend"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
@@ -33,10 +26,8 @@ class VectorStore:
         """Initialize the vector store"""
         if self.provider == "chroma":
             self._init_chroma()
-        elif self.provider == "pinecone":
-            self._init_pinecone()
-        # elif self.provider == "weaviate":
-        #     self._init_weaviate()
+        # elif self.provider == "pinecone":
+        #     self._init_pinecone()
         else:
             raise ValueError(f"Unsupported vector store provider: {self.provider}")
     
@@ -56,19 +47,6 @@ class VectorStore:
         )
         logger.info("ChromaDB initialized")
     
-    def _init_pinecone(self):
-        """Initialize Pinecone"""
-        if not PINECONE_AVAILABLE:
-            raise ImportError("pinecone-client not installed")
-        
-        import pinecone
-        pinecone.init(
-            api_key=self.config.get("api_key"),
-            environment=self.config.get("environment"),
-        )
-        self.collection = pinecone.Index(self.config.get("index_name"))
-        logger.info("Pinecone initialized")
-    
     def add(self, ids: List[str], embeddings: List[List[float]], 
             documents: List[str], metadatas: List[Dict] = None) -> bool:
         """Add vectors to store"""
@@ -80,9 +58,6 @@ class VectorStore:
                     documents=documents,
                     metadatas=metadatas or [{}] * len(ids),
                 )
-            elif self.provider == "pinecone":
-                vectors = [(id_, emb, meta or {}) for id_, emb, meta in zip(ids, embeddings, metadatas or [{}] * len(ids))]
-                self.collection.upsert(vectors=vectors)
             return True
         except Exception as e:
             logger.error(f"Failed to add vectors: {e}")
@@ -105,19 +80,6 @@ class VectorStore:
                     "metadatas": results["metadatas"][0],
                     "distances": results["distances"][0],
                 }
-            elif self.provider == "pinecone":
-                results = self.collection.query(
-                    vector=query_embedding,
-                    top_k=n_results,
-                    filter=filter,
-                    include_metadata=True,
-                )
-                return {
-                    "ids": [m["id"] for m in results["matches"]],
-                    "documents": [m["metadata"].get("text", "") for m in results["matches"]],
-                    "metadatas": [m["metadata"] for m in results["matches"]],
-                    "distances": [m["score"] for m in results["matches"]],
-                }
         except Exception as e:
             logger.error(f"Vector query failed: {e}")
             return {"ids": [], "documents": [], "metadatas": [], "distances": []}
@@ -129,8 +91,6 @@ class VectorStore:
         try:
             if self.provider == "chroma":
                 self.collection.delete(ids=ids)
-            elif self.provider == "pinecone":
-                self.collection.delete(ids=ids)
             return True
         except Exception as e:
             logger.error(f"Failed to delete vectors: {e}")
@@ -141,8 +101,6 @@ class VectorStore:
         try:
             if self.provider == "chroma":
                 return self.collection.count()
-            elif self.provider == "pinecone":
-                return self.collection.describe_index_stats()["total_vector_count"]
         except Exception:
             return 0
         return 0

@@ -1,7 +1,6 @@
 """
-Embedding Generators - Vector embeddings for semantic search
+Embedding Generator - Vector embeddings for semantic search
 """
-
 import numpy as np
 from typing import List, Dict, Any, Optional
 from loguru import logger
@@ -69,7 +68,7 @@ class EmbeddingGenerator:
         logger.warning("Using fallback hash-based embeddings - not semantic!")
         embeddings = []
         for text in texts:
-            # Simple hash-based pseudo-embedding (NOT for production)
+            # Simple hash-based pseudo-embedding (NOT for production semantic search)
             hash_val = hash(text)
             np.random.seed(abs(hash_val) % (2**32))
             emb = np.random.normal(0, 1, 384)

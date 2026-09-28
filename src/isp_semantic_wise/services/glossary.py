@@ -1,7 +1,6 @@
 """
 Glossary Builder - Generates business glossary from code and documentation
 """
-
 from typing import Dict, List, Any, Optional
 from loguru import logger
 
@@ -13,17 +12,17 @@ from ..storage.graph import GraphStore
 
 
 class GlossaryBuilder:
-    """Builds business glossary from technical artifacts"""
+    """Builds business glossary from code and documentation"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
         self.settings = get_settings()
         self.embedder = EmbeddingGenerator(self.config.get("embedding", {}))
         self.linker = BusinessTermLinker(self.config.get("linker", {}))
-        self.vector_store = None  # Injected
-        self.graph_store = None   # Injected
+        self.vector_store = None
+        self.graph_store = None
     
-    def set_stores(self, vector_store, graph_store):
+    def set_stores(self, vector_store: VectorStore, graph_store: GraphStore):
         """Set storage backends"""
         self.vector_store = vector_store
         self.graph_store = graph_store
@@ -161,7 +160,6 @@ class GlossaryBuilder:
     
     def _cluster_candidates(self, candidates: List[Dict]) -> List[List[Dict]]:
         """Cluster similar candidates together"""
-        # Simple clustering by term similarity
         clusters = []
         used = set()
         
@@ -181,7 +179,7 @@ class GlossaryBuilder:
                 # Check similarity
                 if self._terms_similar(cand.get("term", ""), other.get("term", "")):
                     cluster.append(other)
-                    used.add(candidates.index(other))
+                    used.add(j)
             
             if cluster:
                 yield cluster

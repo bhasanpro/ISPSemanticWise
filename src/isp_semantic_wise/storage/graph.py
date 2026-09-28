@@ -1,7 +1,6 @@
 """
 Graph Store - Neo4j/NetworkX abstraction
 """
-
 from typing import List, Dict, Any, Optional, Set
 from loguru import logger
 
@@ -19,7 +18,7 @@ except ImportError:
 
 
 class GraphStore:
-    """Abstract graph store with Neo4j and NetworkX backends"""
+    """Graph store with Neo4j and NetworkX backends"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
@@ -82,6 +81,8 @@ class GraphStore:
                     session.run(query, params)
             elif self.provider == "networkx":
                 self.graph.add_node(node_id, **(properties or {}))
+                if labels:
+                    self.graph.nodes[node_id]["labels"] = labels
             return True
         except Exception as e:
             logger.error(f"Failed to add node: {e}")
@@ -149,22 +150,18 @@ class GraphStore:
                     query = f"""
                         MATCH (a), (b) 
                         WHERE a.id = $source AND b.id = $target
-                        CREATE (a)-[r:{relationship} {{{','.join([f'{k}: ${k}' for k in properties.keys()])}}}]->(b)
-                    """ if properties else f"""
-                        MATCH (a), (b) 
-                        WHERE a.id = $source AND b.id = $target
-                        CREATE (a)-[r:{relationship}]->(b)
+                        CREATE (a)-[r:{relationship} {{{props_str}}}]->(b)
                     """
-                    params = {"source": node_id, "target": target_id, **(properties or {})}
+                    params = {"source": source_id, "target": target_id, **(properties or {})}
                     session.run(query, params)
             elif self.provider == "networkx":
                 import networkx as nx
                 if isinstance(self.graph, nx.DiGraph):
-                    self.graph.add_edge(node_id, target_id, 
+                    self.graph.add_edge(source_id, target_id, 
                                       relationship=relationship, 
                                       **(properties or {}))
                 else:
-                    self.graph.add_edge(node_id, target_id,
+                    self.graph.add_edge(source_id, target_id,
                                       relationship=relationship,
                                       **(properties or {}))
             return True
@@ -183,7 +180,7 @@ class GraphStore:
                 elif direction == "incoming":
                     dir_clause = "<-"
                 
-                query = f"MATCH (a)-[r{direction_clause}]-(b) WHERE a.id = $id RETURN b.id"
+                query = f"MATCH (a)-[r{direction}]-(b) WHERE a.id = $id RETURN b.id"
                 with self.driver.session(database=self.database) as session:
                     result = session.run(query, id=node_id)
                     neighbors = [record["b.id"] for record in result]
@@ -223,7 +220,7 @@ class GraphStore:
                         return [node["id"] for node in record["p"].nodes]
             elif self.provider == "networkx":
                 import networkx as nx
-                if nx.has_path(self.graph, node_id, target):
+                if nx.has_path(self.graph, source, target):
                     return nx.shortest_path(self.graph, source, target)
         except Exception as e:
             logger.error(f"Failed to find path: {e}")
@@ -232,7 +229,7 @@ class GraphStore:
     def traverse_downstream(self, start_node: str, max_depth: int = 5) -> List[str]:
         """Traverse downstream from node"""
         visited = set()
-        current = {node_id}
+        current = {start_node}
         downstream = []
         
         for _ in range(max_depth):
@@ -257,7 +254,7 @@ class GraphStore:
     def traverse_upstream(self, start_node: str, max_depth: int = 5) -> List[str]:
         """Traverse upstream from node"""
         visited = set()
-        current = {node_id}
+        current = {start_node}
         upstream = []
         
         for _ in range(max_depth):

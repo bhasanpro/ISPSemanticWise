@@ -1,10 +1,10 @@
 """
 Semantic Chunkers - Code and document chunking strategies
 """
-
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 from loguru import logger
+import re
 
 
 class BaseChunker(ABC):
@@ -49,7 +49,6 @@ class SemanticChunker(BaseChunker):
         chunks = []
         lines = content.split('\n')
         
-        # Simple function/procedure boundary detection
         current_chunk = []
         current_start = 0
         brace_count = 0
@@ -66,7 +65,6 @@ class SemanticChunker(BaseChunker):
             stripped = line.strip().upper()
             if any(stripped.startswith(kw) for kw in ['CREATE PROCEDURE', 'CREATE FUNCTION', 'FUNCTION ', 'PROCEDURE ', 'def ']):
                 if in_function and current_chunk:
-                    # Save previous chunk
                     chunks.append(self._make_chunk(current_chunk, current_start, i-1, metadata))
                     current_chunk = [line]
                     current_start = len('\n'.join(lines[:i]))
@@ -75,7 +73,6 @@ class SemanticChunker(BaseChunker):
             
             # Detect function end
             if in_function and brace_count <= 0 and current_chunk:
-                # Check for END; or }
                 if any(kw in line.upper() for kw in ['END;', 'END ;', '}']):
                     chunks.append(self._make_chunk(current_chunk, current_start, i, metadata))
                     current_chunk = []

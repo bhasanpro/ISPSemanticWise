@@ -1,7 +1,6 @@
 """
 Trade Match Debugger - Debug trade breaks with lineage analysis
 """
-
 from typing import Dict, List, Any, Optional
 from loguru import logger
 
@@ -19,13 +18,13 @@ class TradeMatchDebugger:
         self.graph_store = None
         self.relational_store = None
     
-    def set_stores(self, graph_store, relational_store):
+    def set_stores(self, graph_store: GraphStore, relational_store: RelationalStore):
         self.graph_store = graph_store
         self.relational_store = relational_store
     
     def debug_trade(self, trade_id: str, break_code: str = None) -> Dict:
         """
-        Debug a specific trade break
+        Debug a specific trade break with full lineage analysis
         
         Returns:
             Dictionary with lineage trace, mismatch points, root cause, business action
@@ -194,10 +193,15 @@ class TradeMatchDebugger:
                 "root_cause": "Fee schedule applied during enrichment but not reflected in counterparty confirmation",
                 "business_action": "Confirm with counterparty if fee should be included in settlement amount or handled separately",
             }
+        elif stage == "enriched_to_recon_expected":
+            return {
+                "root_cause": "Enriched settlement amount differs from counterparty confirmation",
+                "business_action": "Reconcile fee schedules with counterparty agreements",
+            }
         elif stage == "recon_match":
             return {
                 "root_cause": "Settlement amount in enriched data differs from counterparty confirmation",
-                "business_action": "Investigate fee application logic and confirm with counterparty",
+                "business_action": "Resolve break by confirming fee handling with counterparty",
             }
         elif stage == "source_to_abinitio":
             return {
@@ -207,7 +211,7 @@ class TradeMatchDebugger:
         else:
             return {
                 "root_cause": "Value mismatch detected in reconciliation pipeline",
-                "business_action": "Review transformation logic at divergence point",
+                "business_action": "Investigate divergence point and resolve with counterparty",
             }
     
     def analyze_break_code(self, break_code: str, counterparty: str = None) -> Dict:

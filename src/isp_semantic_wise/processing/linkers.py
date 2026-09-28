@@ -1,10 +1,10 @@
 """
 Entity Linker - Links extracted entities to business terms and technical artifacts
 """
-
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass
 from loguru import logger
+from difflib import get_close_matches
 
 
 @dataclass
@@ -99,7 +99,6 @@ class EntityLinker:
             )
         
         # Check technical artifacts
-        # Try path-based matching
         for path, artifact in self.technical_artifacts_cache.items():
             if path.endswith(text.lower()) or text.lower() in path:
                 return EntityLink(
@@ -136,7 +135,7 @@ class EntityLinker:
         
         # Technical artifacts
         tech_names = list(self.technical_artifacts_cache.keys())
-        matches = get_close_matches(text.lower(), tech_names, n=3, cutoff=0.75)
+        matches = get_close_matches(text_lower, tech_names, n=3, cutoff=0.75)
         if matches:
             best = matches[0]
             artifact = self.technical_artifacts_cache[best]
@@ -241,14 +240,18 @@ class TechnicalArtifactLinker(EntityLinker):
         # Traverse downstream
         downstream = set()
         current = {node_id}
-        for _ in range(5):
+        for _ in range(max_depth):
             next_nodes = set()
             for node in current:
+                if node in downstream:
+                    continue
+                downstream.add(node)
+                
                 for succ in self.lineage_graph.successors(node):
                     if succ not in downstream:
-                        downstream.add(succ)
                         next_nodes.add(succ)
-            current = next_nodes
+            
+            current = next_nodes - downstream
             if not current:
                 break
         
@@ -278,6 +281,7 @@ class TechnicalArtifactLinker(EntityLinker):
                     if pred not in upstream:
                         upstream.add(pred)
                         next_nodes.add(pred)
+            
             current = next_nodes
             if not current:
                 break

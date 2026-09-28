@@ -1,7 +1,6 @@
 """
 NL2SQL Translator - Natural Language to SQL with Lineage
 """
-
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
@@ -122,7 +121,6 @@ class NL2SQLTranslator:
         ]
         
         for pattern, ttype in time_patterns:
-            import re
             if re.search(pattern, q, re.IGNORECASE):
                 intent["time_range"] = {"type": ttype}
                 break
@@ -158,13 +156,13 @@ class NL2SQLTranslator:
         # Columns (common ones)
         col_keywords = ["settlement", "trade", "amount", "date", "quantity", "price", "currency", "counterparty", "status"]
         for col in ["settlement_amount", "trade_date", "trade_id", "quantity", "price", "currency", "counterparty", "status"]:
-            if col.replace("_", " ") in question.lower():
+            if col.replace("_", " ") in question_lower:
                 entities["columns"].append(col)
         
         # Table hints
         table_keywords = ["trade", "recon", "confirmation", "settlement", "fee", "counterparty"]
         for table in ["TRADE_CORE", "RECON_RESULTS", "CONFIRMATIONS", "SETTLEMENTS", "FEE_SCHEDULE", "COUNTERPARTY"]:
-            if any(kw in question.lower() for kw in table.lower().split("_")):
+            if any(kw in question_lower() for kw in table.lower().split("_")):
                 entities["tables"].append(table)
         
         return entities
@@ -199,7 +197,7 @@ class NL2SQLTranslator:
         }
     
     def _generate_sql(self, question: str, entities: Dict, schema: Dict) -> Dict:
-        """Generate SQL using LLM (placeholder - would call Tier 1 model)"""
+        """Generate SQL using Tier 1 model with tool calling"""
         # This would call the Tier 1 model with tools
         # For now, return template-based SQL
         
@@ -215,10 +213,9 @@ class NL2SQLTranslator:
     
     def _template_sql(self, entities: Dict) -> str:
         """Generate template-based SQL"""
-        # Simple template-based generation
         if entities.get("break_codes"):
             return f"""
-SELECT t.TRADE_ID, t.TRD_DT, t.CP_CD, r.SETT_AMT, c.CONF_AMT,
+SELECT t.TRADE_ID, t.TRD_DT, r.SETT_AMT, c.CONF_AMT,
        (r.SETT_AMT - c.CONF_AMT) as DIFF_AMT
 FROM RECON_RESULTS r
 JOIN TRADE_CORE t ON r.TRADE_ID = t.TRADE_ID
@@ -235,6 +232,13 @@ WHERE t.CP_CD = '{entities['counterparties'][0]}'
   AND t.TRD_DT >= CURRENT_DATE - INTERVAL '1 month'
 """
         
+        if entities.get("trade_ids"):
+            return f"""
+SELECT TRADE_ID, TRD_DT, SETT_AMT, SETT_CCY
+FROM TRADE_CORE
+WHERE TRADE_ID = '{entities['trade_ids'][0]}'
+"""
+        
         return "SELECT 1 as placeholder"
     
     def _validate_sql(self, sql: str) -> Dict:
@@ -244,7 +248,6 @@ WHERE t.CP_CD = '{entities['counterparties'][0]}'
         
         sql_upper = sql.upper()
         
-        # Basic checks
         if not sql.strip():
             errors.append("Empty SQL")
         

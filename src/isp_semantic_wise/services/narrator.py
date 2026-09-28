@@ -1,7 +1,6 @@
 """
 Root Cause Narrator - Generates business-language narratives from technical traces
 """
-
 from typing import Dict, List, Any, Optional
 from loguru import logger
 
@@ -109,7 +108,7 @@ GUIDELINES:
         executive_summary = f"""
 Trade {trade_id} broke with code {break_code} due to a mismatch at the {stage.replace('_', ' ')} stage. 
 The root cause is {divergence.get('reason', 'a value mismatch')} resulting in a difference of {divergence.get('difference', 'unknown amount')}. 
-Immediate action required: {self._get_action(stage)}.
+Immediate action required: {self._get_action(divergence.get('stage', ''))}.
 """
         
         # Technical trace (simplified)
@@ -118,16 +117,16 @@ Immediate action required: {self._get_action(stage)}.
             tech_trace.append(f"Step {step.get('step')}: {step.get('system')} - {step.get('component', step.get('graph', ''))} - {step.get('status', '')}")
         
         # Root cause in business terms
-        root_cause = self._business_root_cause(stage)
+        root_cause = self._business_root_cause(divergence.get("stage", ""))
         
         # Impact assessment
         impact = self._assess_impact(data)
         
         # Recommended actions
-        actions = self._recommended_actions(stage, data.get("trade_context", {}))
+        actions = self._recommended_actions(divergence.get("stage", ""), data.get("trade_context", {}))
         
         # Prevention
-        prevention = self._prevention_measures(stage)
+        prevention = self._prevention_measures(divergence.get("stage", ""))
         
         return {
             "narrative": "",
@@ -140,7 +139,6 @@ Immediate action required: {self._get_action(stage)}.
         }
     
     def _executive_format(self, data: Dict) -> Dict:
-        """Executive summary only"""
         result = self._structured_format(data)
         return {
             "narrative": result["executive_summary"],
@@ -153,7 +151,6 @@ Immediate action required: {self._get_action(stage)}.
         }
     
     def _narrative_format(self, data: Dict) -> Dict:
-        """Flowing narrative format"""
         result = self._structured_format(data)
         
         narrative = f"""
@@ -170,7 +167,7 @@ Business Impact: {data.get('impact_assessment', 'Under assessment')}.
 Recommended Actions:
 """
         for i, action in enumerate(result['recommended_actions'], 1):
-            narrative += f"{i}. {action['action']} (Owner: {action.get('owner', 'TBD')}, Priority: {action.get('priority', 'Medium')})\n"
+            narrative += f"{i}. {action['action']} (Owner: {action.get('owner', 'TBD')}, Priority: {action.get('priority', 'Medium')}, Timeline: {action.get('timeline', 'TBD')})\n"
         
         narrative += "\nPrevention Measures:\n"
         for i, prev in enumerate(result['prevention_measures'], 1):
@@ -200,13 +197,12 @@ Recommended Actions:
         trade_id = data.get("trade_id", "")
         break_code = data.get("break_code", "")
         
-        # Simple impact assessment
         if break_code == "SAMT":
             diff = data.get("divergence", {}).get("difference", 0)
             if isinstance(diff, (int, float)) and diff > 10000:
                 return f"HIGH - Trade {trade_id} has settlement amount discrepancy of ${diff:,.2f}. Impacts P&L, regulatory reporting, and counterparty relationship."
             return f"MEDIUM - Trade {trade_id} has settlement amount discrepancy. Requires investigation."
-        return f"LOW - Trade {data.get('trade_id', '')} has {data.get('break_code', '')} break. Routine investigation needed."
+        return f"LOW - Trade {trade_id} has {break_code} break. Routine investigation needed."
     
     def _recommended_actions(self, stage: str, context: Dict) -> List[Dict]:
         actions_map = {
@@ -221,7 +217,7 @@ Recommended Actions:
             ],
             "recon_match": [
                 {"action": "Manually resolve trade break", "owner": "Operations", "priority": "High", "timeline": "4 hours"},
-                {"action": "Root cause analysis for recurring breaks", "owner": "BA/IT", "priority": "Medium", "timeline": "1 week"],
+                {"action": "Root cause analysis for recurring breaks", "owner": "BA/IT", "priority": "Medium", "timeline": "1 week"},
             ],
         }
         return actions_map.get(stage, [
