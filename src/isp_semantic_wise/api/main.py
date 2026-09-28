@@ -1,5 +1,5 @@
 """
-ISPSemanticWise API - FastAPI Application
+Main API Router - FastAPI application with all routes
 """
 
 from contextlib import asynccontextmanager
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     # await close_connections()
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(settings: Settings = None) -> FastAPI:
     """Create FastAPI application"""
     if settings is None:
         settings = get_settings()

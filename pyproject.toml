@@ -1,6 +1,11 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "maturin"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.extra-build-dependencies]
+cx-oracle = ["pkg_resources"]
+pydantic-core = ["maturin"]
+isp-semantic-wise = ["setuptools"]
 
 [project]
 name = "isp-semantic-wise"
@@ -20,46 +25,14 @@ dependencies = [
     "langchain==0.1.12",
     "langchain-core==0.1.35",
     "langchain-openai==0.1.0",
-    "chromadb==0.4.24",
-    "neo4j==5.19.0",
+"neo4j==5.19.0",
     "networkx==3.2.1",
     "sqlalchemy==2.0.29",
-    "cx-Oracle==8.3.0",
+    "oracledb==2.5.0",
     "alembic==1.13.1",
-    "tree-sitter==0.21.3",
-    "tree-sitter-python==0.21.1",
-    "tree-sitter-bash==0.20.1",
-    "lxml==5.2.1",
+    "ruamel.yaml==0.18.6",
     "xmltodict==0.13.0",
-    "sentence-transformers==3.0.1",
-    "pandas==2.2.1",
-    "numpy==1.26.4",
-    "email-reply-parser==0.1.11",
-    "beautifulsoup4==4.12.3",
-    "atlassian-python-api==3.41.0",
-    "rich==13.7.1",
-    "typer==0.12.1",
-    "tqdm==4.66.2",
-    "tenacity==8.2.3",
-    "structlog==24.1.0",
 ]
-optional-dependencies = {
-    "dev": [
-        "pytest==8.1.1",
-        "pytest-asyncio==0.23.3",
-        "pytest-cov==5.0.0",
-        "pytest-mock==3.14.0",
-        "httpx==0.27.0",
-        "ragas==0.1.2",
-        "black==24.3.0",
-        "isort==5.13.2",
-        "mypy==1.9.0",
-        "ruff==0.3.0",
-        "pre-commit==3.6.0",
-    ],
-    "pinecone": ["pinecone-client==3.0.0"],
-    "weaviate": ["weaviate-client==4.6.0"],
-}
 
 [project.optional-dependencies]
 dev = [
@@ -75,6 +48,11 @@ dev = [
     "ruff==0.3.0",
     "pre-commit==3.6.0",
 ]
+tree-sitter = ["tree-sitter==0.21.3", "tree-sitter-python==0.25.0", "tree-sitter-bash==0.25.1"]
+pinecone = ["pinecone-client==3.0.0"]
+weaviate = ["weaviate-client==4.6.0"]
+chromadb = ["chromadb==0.4.24"]
+c-extensions = ["sentence-transformers==3.0.1", "pandas==2.2.1", "numpy==1.26.4", "email-reply-parser==0.5.12", "beautifulsoup4==4.12.3", "atlassian-python-api==3.41.0", "lxml==5.2.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -118,8 +96,8 @@ markers = [
 [tool.black]
 line-length = 100
 target-version = ["py311"]
-include = "\\.pyi?$"
-exclude = """
+include = '\\.pyi?$'
+exclude = '''
 /(
     \.git
   | \.hg
@@ -131,7 +109,7 @@ exclude = """
   | build
   | dist
 )/
-"""
+'''
 
 [tool.isort]
 profile = "black"
@@ -149,9 +127,8 @@ select = [
     "E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "T20", "PIE",
 ]
 ignore = ["E501", "B008"]
-per-file-ignores = {
-    "tests/*": ["S101", "D100", "D101", "D102", "D103", "D104", "D105", "D107"]
-}
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101", "D100", "D101", "D102", "D103", "D104", "D105", "D107"]
 
 [tool.mypy]
 python_version = "3.11"
