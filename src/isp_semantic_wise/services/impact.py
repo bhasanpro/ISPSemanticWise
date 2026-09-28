@@ -1,17 +1,19 @@
 """
-Impact Analyzer - Analyzes downstream impact of proposed changes
+Impact Analyzer Service - Analyzes downstream impact of proposed changes
+Uses chaos document and NetworkX graph for comprehensive impact analysis
 """
-
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Set
+from dataclasses import dataclass, field
 from loguru import logger
 
 from ..config import get_settings
 from ..storage.graph import GraphStore
+from ..storage.relational import RelationalStore
 
 
 @dataclass
 class ImpactResult:
+    """Result of impact analysis"""
     change_summary: str
     affected_artifacts: List[Dict]
     risk_score: float
@@ -20,6 +22,18 @@ class ImpactResult:
     behavioral_changes: List[Dict]
     performance_impact: Optional[str]
     recommendations: List[str]
+    migration_effort: str  # "low", "medium", "high"
+
+
+@dataclass
+class ChangeRequest:
+    """Request for impact analysis"""
+    change_type: str  # column, procedure, transform, parameter, schedule, graph
+    source_system: str  # ab_initio, oracle, unix, pyspark
+    artifact_path: str  # full path to artifact
+    change_description: str
+    proposed_value: Optional[str] = None
+    max_depth: int = 5
 
 
 class ImpactAnalyzer:
@@ -29,11 +43,13 @@ class ImpactAnalyzer:
         self.config = config or {}
         self.settings = get_settings()
         self.graph_store = None
+        self.relational_store = None
     
-    def set_graph_store(self, graph_store):
+    def set_stores(self, graph_store: GraphStore, relational_store: RelationalStore):
         self.graph_store = graph_store
+        self.relational_store = relational_store
     
-    def analyze(self, change_request: Dict) -> ImpactResult:
+    def analyze(self, change_request: Dict) -> Dict:
         """
         Analyze impact of proposed change
         
@@ -54,6 +70,7 @@ class ImpactAnalyzer:
         change_type = change_request.get("change_type", "")
         source_system = change_request.get("source_system", "")
         artifact_path = change_request.get("artifact_path", "")
+        change_description = change_request.get("change_description", "")
         max_depth = change_request.get("max_depth", 5)
         
         # Step 1: Find affected artifacts via graph traversal
@@ -80,18 +97,22 @@ class ImpactAnalyzer:
         risk_level = self._risk_level(risk_score)
         
         # Step 4: Generate recommendations
-        recommendations = self._generate_recommendations(risk_level, breaking, behavioral)
+        recommendations = self._generate_recommendations(risk_level, breaking, behavioral, change_request)
         
-        return ImpactResult(
-            change_summary=f"{change_request.get('change_type', 'Change')} on {artifact_path}: {change_request.get('change_description', '')}",
-            affected_artifacts=affected,
-            risk_score=round(risk_score, 2),
-            risk_level=risk_level,
-            breaking_changes=breaking,
-            behavioral_changes=behavioral,
-            performance_impact=performance,
-            recommendations=recommendations,
-        )
+        # Step 5: Estimate migration effort
+        migration_effort = self._estimate_effort(breaking, behavioral, change_request)
+        
+        return {
+            "change_summary": f"{change_request.get('change_type', 'Change')} on {artifact_path}: {change_request.get('change_description', '')}",
+            "affected_artifacts": affected,
+            "risk_score": round(risk_score, 2),
+            "risk_level": risk_level,
+            "breaking_changes": breaking,
+            "behavioral_changes": behavioral,
+            "performance_impact": performance,
+            "recommendations": recommendations,
+            "migration_effort": migration_effort
+        }
     
     def _traverse_downstream(self, start_path: str, max_depth: int) -> List[Dict]:
         """Traverse graph downstream from change point"""
@@ -123,8 +144,8 @@ class ImpactAnalyzer:
                         "type": node_data.get("artifact_type", ""),
                         "source_system": node_data.get("source_system", ""),
                         "depth": depth,
-                        "name": node_data.get("name", ""),
-                    })
+                        "name": node_data.get("name", "")
+                    }
                 
                 # Get successors
                 for succ in self.graph_store.successors(node):
@@ -138,36 +159,32 @@ class ImpactAnalyzer:
         return affected
     
     def _mock_downstream(self, start_path: str, max_depth: int) -> List[Dict]:
-        """Mock downstream for testing"""
+        """Mock downstream for testing without graph store"""
         mock_paths = {
             "TRADE_CORE.SETT_AMT": [
-                "SP_ENRICH_TRADE.SETT_AMT",
-                "SP_RECON_MATCH",
-                "RECON_RESULTS",
-                "RECON_REPORT",
+                "SP_ENRICH_TRADE.SETT_AMT", "SP_RECON_MATCH", "RECON_RESULTS",
+                "RECON_REPORT", "FEE_CALCULATION"
             ],
             "AB_INITIO.G_TRADE_ENRICH.SETT_AMT": [
-                "SP_ENRICH_TRADE.SETT_AMT",
-                "SP_RECON_MATCH",
+                "SP_ENRICH_TRADE.SETT_AMT", "SP_RECON_MATCH"
             ],
             "FEE_SCHEDULE.FEE_PCT": [
-                "SP_ENRICH_TRADE.SETT_AMT",
-                "SP_RECON_MATCH",
+                "SP_ENRICH_TRADE.SETT_AMT", "SP_RECON_MATCH"
             ],
         }
         
         downstream = mock_paths.get(start_path, [])
         return [
             {"path": path, "type": "procedure" if "SP_" in path else "table", 
-             "source_system": "oracle", "depth": i, "name": path.split(".")[-1]}
-            for i, path in enumerate(downstream)
+             "source_system": "oracle", "depth": 1, "name": path.split(".")[-1]}
+            for path in downstream
         ]
     
     def _find_node_by_path(self, path: str) -> Optional[str]:
         """Find graph node by path"""
         if not self.graph_store:
             return None
-        # Would query graph store
+        # Would query Neo4j for node with matching path property
         return None
     
     def _classify_impact(self, change_request: Dict, artifact: Dict) -> str:
@@ -214,6 +231,8 @@ class ImpactAnalyzer:
             score += 0.1
         elif change_type == "transform":
             score += 0.15
+        elif change_type == "column":
+            score += 0.15
         
         # Source system modifiers
         source = change_request.get("source_system", "")
@@ -234,7 +253,7 @@ class ImpactAnalyzer:
         else:
             return "low"
     
-    def _generate_recommendations(self, risk_level: str, breaking: List, behavioral: List) -> List[str]:
+    def _generate_recommendations(self, risk_level: str, breaking: List, behavioral: List, change_request: Dict) -> List[str]:
         recommendations = []
         
         if risk_level in ["critical", "high"]:
@@ -254,3 +273,14 @@ class ImpactAnalyzer:
             recommendations.append("Standard deployment process sufficient")
         
         return recommendations
+    
+    def _estimate_effort(self, breaking: List, behavioral: List, change_request: Dict) -> str:
+        """Estimate migration/change effort"""
+        total_affected = len(breaking) + len(behavioral)
+        
+        if len(breaking) > 5:
+            return "high"
+        elif len(breaking) > 2 or len(behavioral) > 5:
+            return "medium"
+        else:
+            return "low"
