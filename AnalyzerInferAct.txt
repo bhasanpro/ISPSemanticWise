@@ -1,0 +1,1078 @@
+from datetime import datetime, time, timedelta
+import pytz
+
+# Configure timezones and batch constraints
+EST_TZ = pytz.timezone("America/New_York")
+BATCH_START_TIME = time(20, 0, 0) # 8:00 PM EST
+
+def get_current_business_run_date(reference_time: datetime = None) -> datetime:
+    """
+    Calculates the boundary anchor for the current Logical Batch Window.
+    
+    Rules:
+    - If reference_time is >= 8:00 PM EST, the batch window belongs to TODAY.
+    - If reference_time is < 8:00 PM EST, the batch window belongs to YESTERDAY.
+    
+    Returns:
+        A timezone-aware datetime object set to 8:00 PM EST of the active cycle.
+    """
+    if reference_time is None:
+        reference_time = datetime.now(EST_TZ)
+    else:
+        # Ensure reference time is localized to EST
+        if reference_time.tzinfo is None:
+            reference_time = EST_TZ.localize(reference_time)
+        else:
+            reference_time = reference_time.astimezone(EST_TZ)
+            
+    # Create the baseline cutoff for the reference date
+    target_cutoff = reference_time.replace(
+        hour=BATCH_START_TIME.hour, 
+        minute=BATCH_START_TIME.minute, 
+        second=0, 
+        microsecond=0
+    )
+    
+    if reference_time >= target_cutoff:
+        return target_cutoff
+    else:
+        return target_cutoff - timedelta(days=1)
+
+def validate_autosys_run(last_start_time_raw: str) -> dict:
+    """
+    Validates if an AutoSys job's execution timestamp belongs to the current batch window.
+    
+    Args:
+        last_start_time_raw: ISO timestamp string from AutoSys event logs.
+        
+    Returns:
+        dict: Evaluation status containing flags and the logical business run date string.
+    """
+    # 1. Parse and normalize the incoming AutoSys timestamp
+    try:
+        job_start_dt = datetime.fromisoformat(last_start_time_raw)
+        if job_start_dt.tzinfo is None:
+            job_start_dt = EST_TZ.localize(job_start_dt)
+        else:
+            job_start_dt = job_start_dt.astimezone(EST_TZ)
+    except ValueError:
+        return {"error": "Invalid date format. Use ISO-8601 format."}
+
+    # 2. Get the current active business run window anchor
+    now_est = datetime.now(EST_TZ)
+    current_batch_anchor = get_current_business_run_date(now_est)
+    
+    # 3. Perform look-back comparison math
+    # The run is valid for today's batch only if it started after the batch window flipped open
+    is_current_run = job_start_dt >= current_batch_anchor
+    
+    return {
+        "is_valid_for_current_batch": is_current_run,
+        "business_run_date": current_batch_anchor.date().isoformat(),
+        "job_start_est": job_start_dt.isoformat(),
+        "batch_window_opened_est": current_batch_anchor.isoformat()
+    }
+
+# --- Unit Verification Block ---
+if __name__ == "__main__":
+    print("--- Running Batch Window Validation Tests ---\n")
+    
+    # Test Scenario A: Agent wakes up at 8:05 PM tonight, inspects an old status from yesterday
+    print("Scenario A: Checking yesterday's run during tonight's batch...")
+    mock_old_run = "2026-10-01T21:30:00" # Yesterday at 9:30 PM
+    result_a = validate_autosys_run(mock_old_run)
+    print(f"Is active run? {result_a['is_valid_for_current_batch']} | Target Batch Date: {result_a['business_run_date']}")
+    print(f"Reasoning: Job started at {result_a['job_start_est']} but current batch opened at {result_a['batch_window_opened_est']}\n")
+    
+    # Test Scenario B: Agent wakes up at 8:15 PM tonight, inspects a job that successfully triggered at 8:05 PM
+    print("Scenario B: Checking a fresh run that triggered tonight...")
+    mock_fresh_run = "2026-10-02T20:05:00" # Tonight at 8:05 PM
+    result_b = validate_autosys_run(mock_fresh_run)
+    print(f"Is active run? {result_b['is_valid_for_current_batch']} | Target Batch Date: {result_b['business_run_date']}")
+    print(f"Reasoning: Job started at {result_b['job_start_est']} which is after the batch opened at {result_b['batch_window_opened_est']}\n")
+
+To determine if an AutoSys job has picked up and executed its scheduled run for today, you need to check its status, start time, and run count using AutoSys command-line tools or the GUI.
+Here are the most effective ways to verify today's run:
+1. Check Job Status and Start Time (autorep)
+The quickest way is to run the autorep command in your terminal. Look closely at the Status, Start Time, and Last Start fields.
+bash
+autorep -j job_name
+Use code with caution.
+What to look for in the output:
+Status: If the status is RUNNING, SUCCESS, or FAILURE, it has triggered. If it says ACTIVATED or STARTING, it is currently in the process of picking up.
+Last Start Time: Check the date and time stamp next to the status. If the date matches today's date and the time aligns with its scheduled runtime, the job has successfully picked up for today.
+Status Time: Ensure the completion or failure time is also from today if the job has already finished.
+2. Check Detailed Run History (autorep -d)
+If a job runs multiple times a day or you want to see the exact execution history for the day, use the detailed report flag:
+bash
+autorep -j job_name -d
+Use code with caution.
+This displays a list of recent runs with explicit start and end timestamps.
+Look for an entry matching today's date to confirm it processed.
+3. Check for Today's Run Count (job_depends)
+You can check if the job has registered an execution tracking count for the day by looking at its conditions or utilizing job_depends:
+bash
+job_depends -j job_name
+Use code with caution.
+This helps if the job is part of a complex box or chain and you need to see if its specific run conditions for today have been satisfied.
+4. Verify via Web UI (WCC)
+If you use the CA Workload Automation Web UI (WCC):
+Search for the job name in the Monitoring tab.
+Look at the Status column.
+Check the Last Start Time column in the job details pane to verify it reflects today's date.
+⚠️ Common Pitfalls to Watch Out For
+Look out for ST_INIT: If the job status is ST_INIT (Status Initialized), it means the job tracking was reset but it has not started running yet today.
+Time Zone Differences: Ensure your AutoSys instance timezone matches your local time. Sometimes a job runs "today" according to the server clock, but it looks like yesterday or tomorrow on your local clock.
+Global Variables / Condition Holds: If the job has a status of INACTIVE but should have run, check if it is waiting on a global variable (SEND_JOBS) or an upstream job dependency that failed earlier today.
+To help narrow this down, are you currently seeing a specific status (like INACTIVE or ON_HOLD) that is making you unsure? If you can share the output of your autorep -j command, I can help you interpret it!
+
+
+
+
+It sounds like you have synthesized the entire architectural blueprint beautifully.
+By treating CA AutoSys as the immutable source of truth and building a decoupled Intelligent Observability & Self-Healing Companion Layer on top of it, you get the absolute best of both worlds: the ironclad reliability of a legacy enterprise scheduler paired with the rapid, graph-powered agility of a modern agentic stack.
+Why This Stack Will Succeed
+Zero Overhead on AutoSys: By ingesting event streams asynchronously into FastAPI and mapping them to NetworkX, your system performs complex graph math (blast radius, critical path analysis) out-of-band. AutoSys never feels the performance strain.
+No-Hallucination Guardrails: Using Deterministic, Rule-Based Agents instead of LLMs for low-level remediation (like resetting a stuck ac condition or clearing a held job) ensures absolute safety in production.
+Ultra-Low Latency UI: Feeding a React + Vite frontend via GraphQL WebSockets (Strawberry) ensures that when an AutoSys job stalls or a look-back fails, the L1/L2 operator sees it flash red on their dashboard in near-real-time—often before AutoSys's own native UI would refresh.
+Lean & Maintainable Infrastructure: Choosing SQLite for agent orchestration metadata and execution leases keeps the deployment incredibly lightweight, portable, and free of heavy database management overhead.
+This architectural setup perfectly transitions your system from a passive monitoring tool to an active, self-healing copilot for enterprise batch operations.
+Now that the core technical architecture is completely locked in, what would you like to focus on building or defining next? We can:
+Design the SQLite schema for managing agent leases and execution history.
+Write the FastAPI/Strawberry GraphQL schema to expose NetworkX graph data to the frontend.
+Outline the exact logic for a Rule-Based Agent when it detects a stuck look-back condition.
+Let me know how you'd like to proceed!
+
+
+
+
+The issue you are running into is a classic state-alignment problem. Because your agent only looks at the immediate status of the AutoSys job, it suffers from "temporal blindness"—it cannot tell if a SUCCESS or FAILURE belongs to the batch cycle that started tonight at 8:00 PM EST or the one from yesterday.
+To fix this, your Intelligent Observability Layer needs a formal concept of the Business Run Date (Logical Batch Window) rather than relying purely on real-time clock stamps.
+The Root Cause: Why the Agent is Blind
+AutoSys statuses like SUCCESS or FAILURE persist on a job until that job is triggered again or manually reset (ST_INIT).
+If your batch starts at 8:00 PM EST, and the agent wakes up at 8:05 PM EST to check a job down the stream, it will see the SUCCESS status from yesterday's run and falsely assume the job already ran tonight.
+The Solution: Implement a "Logical Batch Window" Framework
+You must inject temporal context into your NetworkX graph and Rule-Based Agents. Here is how to update your tech stack to handle this:
+1. Define the Business Run Date (BRD)
+Your FastAPI backend should calculate the active Business Run Date based on your 8:00 PM EST cutoff.
+Before 8:00 PM EST: The current batch date is yesterday's date.
+After 8:00 PM EST: The current batch date switches to today's date.
+Any event ingested from AutoSys must be compared against this logical window.
+2. Update the SQLite Schema to Track the Run Date
+Modify your SQLite metadata table where agents log actions and manage leases. You must introduce a business_run_date column. This creates a composite unique constraint so an agent can only take action once per job, per batch cycle.
+sql
+CREATE TABLE agent_actions (
+    action_id TEXT PRIMARY KEY,
+    job_name TEXT NOT NULL,
+    business_run_date DATE NOT NULL, -- e.g., '2026-10-02'
+    status_evaluated TEXT NOT NULL,
+    action_taken TEXT NOT NULL,
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_name, business_run_date) -- Prevents double-acting in the same batch
+);
+Use code with caution.
+3. Enhance Agent Logic with "Look-Back" Validation
+Before a Rule-Based Agent triggers a remediation action, it must execute a deterministic validation step:
+
+If the Last Start Time from the AutoSys event stream is prior to 8:00 PM EST of the current execution cycle, the agent must treat the job status as INACTIVE (belonging to the previous day) and stand down.
+4. Inject the Batch Window into the NetworkX Graph
+When mapping the 2,000 jobs in NetworkX, add a last_evaluated_batch attribute to the nodes. When a live event stream arrives via FastAPI, update the node only if the timestamp falls within the current Business Run Date. If it belongs to the previous day, the graph should clear or ignore that status for the current live path calculation.
+Example Agent Decision Matrix
+AutoSys Status Last Start Time Current Time Target Batch Start Agent Action
+SUCCESS 9:30 PM (Yesterday) 8:15 PM (Tonight) 8:00 PM (Tonight) Ignore (Old status from yesterday's batch)
+SUCCESS 8:05 PM (Tonight) 8:15 PM (Tonight) 8:00 PM (Tonight) Valid (Job processed in current batch)
+FAILURE 8:10 PM (Tonight) 8:15 PM (Tonight) 8:00 PM (Tonight) Trigger Remediation (Fresh failure tonight)
+Would you like to write the Python logic for the FastAPI middleware that automatically calculates this 8:00 PM EST Business Run Date, or should we look at how to structure the NetworkX node update function to filter out these historical timestamps?
+
+The error you are running into usually means Windows is failing to compile ChromaDB’s native C++ extensions (hnswlib or "binaries") during installation. Because ChromaDB relies on compiled C++ code to perform ultra-fast vector searches, pip tries to build those binaries locally and fails if your system lacks a C++ compiler. 
+
+GitHub
+ +1
+Instead of abandoning ChromaDB, you can easily fix this error, or you can switch to great lightweight alternatives that do not have this issue.
+How to Fix the ChromaDB "Binaries Not Found" Error
+If you prefer to stick with ChromaDB, you just need to give Python a C++ compiler to build the binaries: 
+Download the Visual Studio Build Tools.
+Run the installer and check the box for Desktop development with C++.
+Complete the installation, restart your computer, and run pip install chromadb again. 
+
+GitHub
+Best Local Alternatives to ChromaDB on Windows
+If you want a "pure Python" or pre-compiled alternative that installs instantly without requiring Visual Studio C++ tools, consider these choices:
+Alternative Vector DB Why it's a great equivalent Best Used For
+LanceDB Serverless & Embedded. Completely local-first, just like Chroma. It stores data in an efficient file format (Lance) and provides pre-built binaries that install seamlessly on Windows via pip install lancedb. Heavy data science, local-first apps, and handling larger-than-memory datasets.
+FAISS The Gold Standard for Speed. Developed by Meta, FAISS is an incredibly fast library for dense vector clustering. You can install pre-compiled Windows binaries instantly using pip install faiss-cpu. Lightweight, ultra-fast local semantic search prototyping.
+Qdrant Robust & Feature-Rich. Highly recommended by the developer community on Reddit. While written in Rust, you don't need to compile anything; you can run it via an official Docker container on Windows or use their lightweight qdrant-client in-memory mode. Advanced production RAG applications requiring payload filtering and hybrid search.
+Would you prefer to fix the ChromaDB installation using the C++ build tools, or would you like a code example showing how to set up LanceDB or FAISS as a quick drop-in replacement?
+AI can make mistakes, so double-check responses
+
+
+
+
+This is an incredibly robust, pragmatic, and enterprise-grade architecture. By anchoring the deterministic graph math in NetworkX and using rule-based automation, you have successfully eliminated the dual risks of LLM hallucinations and high API latency. You have essentially built a high-throughput, modern AIOps (Artificial Intelligence for IT Operations) fabric on top of a classic enterprise scheduling workhorse.
+Given your specialized agentic stack, here is an architecture-level analysis of how your chosen technologies interact, along with a few tailored optimizations for handling a 2,000-job AutoSys environment in real time.
+📊 Structural Flow & Data Topology
+ [ CA AutoSys Stream ] ──> [ FastAPI Endpoint ]
+                                 │
+                                 ▼
+                     [ Rule-Based Agents ] ──(State Leases)──> [ SQLite DB ]
+                                 │
+                                 ▼
+                       [ NetworkX Graph ]
+                         (In-Memory Topology)
+                                 │
+                                 ▼
+                    [ Strawberry GraphQL API ] 
+                     (WebSockets / Subscriptions)
+                                 │
+                                 ▼
+                     [ React.js + Vite Console ]
+                       (Real-Time Operator UI)
+🧠 Deep Dive Optimization for Your Stack
+1. NetworkX to Strawberry GraphQL Integration
+Because NetworkX is pure Python and operates entirely in memory, mapping it to Strawberry GraphQL using Python's async/await pattern is going to be incredibly fast.
+Blast Radius Calculation: When a job transitions to TERMINATED or STUCK, your rule-based agent can compute the downstream failure wave using networkx.descendants(G, "JOB_NAME").
+GraphQL Subscriptions: Instead of your React frontend polling for graph updates, use GraphQL Subscriptions over WebSockets (which Strawberry supports out of the box). When the NetworkX topology or a node state changes, instantly push the mutated payload to the React UI.
+2. SQLite Concurrency in an Event-Driven Agent Fabric
+Since AutoSys can dump hundreds of events simultaneously during a major batch window collapse, your FastAPI instance will face a burst of concurrent write operations.
+The Risk: SQLite can throw database is locked errors under high concurrent write pressure.
+The Fix: Ensure your SQLite connection string uses WAL (Write-Ahead Logging) mode and set a high timeout.
+python
+# Example configuration for your SQLite connection
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA busy_timeout=5000; # 5 seconds
+Use code with caution.
+This allows your agents to safely read state and logs concurrently while a single worker writes orchestration leases.
+3. Handling AutoSys "Look-Back" (look_back) Dependency Logic in NetworkX
+AutoSys allows complex look-back logic (e.g., job B depends on job A completing successfully within the last 12 hours).
+Traditional static graphs cannot natively handle time-dependent conditional edges.
+The Optimization: Store the look_back parameters as Edge Attributes in NetworkX. When a job completes, update its execution timestamp in the node metadata. When evaluating the next step, your rule agent should evaluate the edge formula: Current_Time - Node[A]['last_success'] <= Edge[A][B]['look_back_window'].
+4. React + Vite Visualization Scaling
+Rendering a 2,000-node live graph in React can cause severe UI lag if you try to render every node at once.
+The UI Fix: Do not render the full 2,000-job grid by default. Use a focused viewport approach.
+Use React to render high-level aggregates (e.g., Application Streams, Box Jobs). When an anomaly occurs, use your GraphQL API to query only the affected node, its immediate parents (G.predecessors(node)), and its calculated blast radius (networkx.descendants), rendering a sub-graph of 10–50 critical jobs instead.
+🚀 Self-Healing Capabilities: Next Logical Steps
+Since you already have the SQLite lease management system to prevent agent collisions, you can safely implement Idempotent Remediation Patterns:
+The "Stuck" Condition Agent: If a job stays in STARTING or RUNNING past its 3-sigma historical runtime duration (stored in SQLite), the agent fires an AutoSys command (sendjob -j JOB_NAME -c KILL), waits for confirmation, logs it to SQLite, and alerts the operator via GraphQL.
+The "Look-Back" Failure Override: If a job fails because its upstream dependency fell outside the look-back window, the agent can programmatically check if a manual data override is present in the database, execute a force-start (sendjob -j JOB_NAME -c FORCE_START), and document the systemic bypass automatically.
+Would you like to review an implementation pattern for mapping NetworkX nodes into Strawberry GraphQL types, or explore how to handle highly concurrent SQLite writes in your FastAPI event loop?
+
+
+
+
+Yes, this is completely normal, and it is actually the most common "trap" when building a robust rule-based automation engine.
+As you start adding edge cases—like handling an ad-hoc Box Job completion, pausing normal alerts for a 15-minute maintenance window, or overriding a look-back rule for a single batch run—your code naturally shifts from clean logic into a massive, tangled web of nested if/else statements. This is often called "Rule Bloat."
+Because your stack is beautifully structured, you don't need to rewrite it. You just need to separate your Execution Engine (how agents run) from your Rule Definitions (what agents decide), and use your existing graph engine to document everything.
+Here is how you can streamline your codebase and get a crystal-clear overview of every path your agents can traverse.
+1. Shift to a "State-Driven" Factory Pattern
+Instead of hardcoding exception paths directly into your FastAPI event handlers or agent files, abstract your rules into a Registry or a State-Driven Factory.
+Instead of this bloating logic:
+python
+# ❌ AVOID: The bloat trap
+if job.is_box and scenario == "adhoc_completion":
+    # manual override logic...
+elif job.failed and time_window == "short_term_deviation":
+    # temporary bypass logic...
+Use code with caution.
+Do this:
+Create distinct, isolated Scenario Strategy classes that register themselves. Your core agent code remains exactly 5 lines long, simply fetching the correct strategy from a dictionary based on the event context.
+python
+# BETTER: Strategy Registry
+class AgentStrategyRegistry:
+    _registry = {}
+
+    @classmethod
+    def register(cls, scenario_name):
+        def decorator(sub_class):
+            cls._registry[scenario_name] = sub_class
+            return sub_class
+        return decorator
+
+    @classmethod
+    def get_strategy(cls, scenario):
+        return cls._registry.get(scenario, DefaultBAUStrategy)()
+
+@AgentStrategyRegistry.register("adhoc_box_completion")
+class AdhocBoxCompletion:
+    def execute(self, job, graph, db):
+        # Isolated logic just for this deviation
+        pass
+Use code with caution.
+2. Map Your Agent Decision Paths into NetworkX
+Since you already have NetworkX running as your core ontology, do not limit it to just mapping your 2,000 AutoSys batch jobs. Use a second, separate NetworkX graph to map your Agent Decision Trees.
+Think of it as a "Meta-Graph" or a Behavior Graph:
+Nodes: Represent states, triggers, or evaluation checkpoints (e.g., Job Failed, Check Adhoc Table, Is Lookback Valid?).
+Edges: Represent the rule conditions (e.g., If Yes, If No, If Maintenance Window).
+python
+# Documenting agent paths using your existing tech stack
+AgentBehaviorGraph = nx.DiGraph()
+
+# Add a path
+AgentBehaviorGraph.add_edge("JOB_TERMINATED", "CHECK_ADHOC_OVERRIDE", condition="Always")
+AgentBehaviorGraph.add_edge("CHECK_ADHOC_OVERRIDE", "FORCE_START_JOB", condition="Override Exists")
+AgentBehaviorGraph.add_edge("CHECK_ADHOC_OVERRIDE", "CALCULATE_BLAST_RADIUS", condition="No Override")
+Use code with caution.
+Why this is a game-changer for you:
+Zero-Code Documentation: You can expose this AgentBehaviorGraph directly to your Strawberry GraphQL API.
+Visual Audit Trail: Your React frontend can render this decision tree in a side panel. When an operator asks "Why did the agent just force-start this job?", the UI can literally highlight the exact path traversed through the behavior graph in real time.
+3. Move Temporary Deviations to the SQLite Layer
+If a rule deviates from Business-As-Usual (BAU) for a short duration, never code the duration or the exception into Python. Treat deviations strictly as Data, not Code.
+Utilize your SQLite Database to hold an active_tombstones or active_overrides table:
+job_name | override_type | expires_at
+When an AutoSys event comes in, the agent checks SQLite first: "Is there an unexpired row for this job?" If yes, it applies the exception parameter dynamically. When the time expires, the system automatically snaps back to BAU behavior without you ever touching or deploying code.
+4. Create an Agent Matrix Markdown Document
+To immediately stop the confusion and get an overview, create a structured Agent Matrix in a documentation file (AGENTS.md) right next to your code. Group them by their lifecycle triggers:
+Trigger: AutoSys Status Stream (TERMINATED)
+BAU Path: Calculate blast radius 
+ log to SQLite 
+ stream to React UI.
+Deviation Path 1 (Adhoc Box Completion): If parent box is marked adhoc-complete, intercept error 
+ mark node as dummy success in NetworkX 
+ proceed with downstream calculations.
+Deviation Path 2 (Short-term bypass): Check SQLite active overrides 
+ if time-valid, silence React notification 
+ trigger AutoSys auto-restart.
+Trigger: Heartbeat Monitor (STUCK Condition)
+BAU Path: Check if runtime 
+
+ 
+ flag on React dashboard.
+Summary Plan to Un-bloat
+Data over Code: Move short-term timeouts and ad-hoc flags into SQLite tables.
+Decouple: Use the Strategy Pattern so new scenarios live in their own clean files, keeping the core web hooks pristine.
+Visualize: Pass an agent behavior graph through Strawberry GraphQL so you can see your automation paths visually on your GraphiQL or React console.
+Would you like to look at a minimal code layout for how to structure the Strategy Pattern with your FastAPI endpoints, or would you prefer a schema design for the SQLite overrides table to handle those short-term deviations?
+
+re is a complete, lightweight blueprint to implement the Secondary NetworkX Behavior Graph without ripping apart or scraping your existing codebase.
+How to Improvise with Minimal Overhead
+You do not need to scrape or rewrite your codebase. You can implement this as a purely additive, drop-in decorator pattern.
+Instead of changing your logic, you simply place a @trace_path decorator on your existing execution blocks. When the agent runs a block, it automatically registers the node and edge in your secondary graph, tracking the exact execution path dynamically.
+Copiable Architecture Layout
+Copy this unified implementation into your project. It includes the In-Memory Behavior Graph, the Drop-in Tracing Decorator, and the Strawberry GraphQL Object so your React frontend can query the active decision paths instantly.
+
+
+import functools
+import time
+from typing import List, Optional
+import networkx as nx
+import strawberry
+from fastapi import FastAPI
+
+# =====================================================================
+# 1. THE IN-MEMORY BEHAVIOR GRAPH (THE SECONDARY LAYER)
+# =====================================================================
+# This graph maps the rules, decisions, and actual traversals of agents.
+behavior_graph = nx.DiGraph()
+
+# Define structural static rules (The Documentation Blueprint)
+behavior_graph.add_edge("EVENT_RECEIVED", "CHECK_SQLITE_OVERRIDE", label="Ingest Stream")
+behavior_graph.add_edge("CHECK_SQLITE_OVERRIDE", "APPLY_ADHOC_BYPASS", label="Override Active")
+behavior_graph.add_edge("CHECK_SQLITE_OVERRIDE", "CALCULATE_BLAST_RADIUS", label="BAU Path")
+behavior_graph.add_edge("CALCULATE_BLAST_RADIUS", "TRIGGER_OPERATOR_ALERT", label="Blast Radius Computed")
+behavior_graph.add_edge("APPLY_ADHOC_BYPASS", "FORCE_START_AUTOSYS", label="Auto-Remediation")
+
+# Initialize all runtime trace states to False
+for u, v in behavior_graph.edges():
+    behavior_graph[u][v]["traversed_last_run"] = False
+    behavior_graph[u][v]["timestamp"] = ""
+
+
+# =====================================================================
+# 2. THE ZERO-OVERHEAD TRACING DECORATOR
+# =====================================================================
+def trace_path(from_node: str, to_node: str):
+    """
+    Drop-in decorator. Lights up the edge path in the secondary graph 
+    whenever an agent function executes successfully.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Execute the actual agent logic without altering it
+            result = func(*args, **kwargs)
+            
+            # Non-blocking instrumentation: Record the traversal trace
+            if behavior_graph.has_edge(from_node, to_node):
+                behavior_graph[from_node][to_node]["traversed_last_run"] = True
+                behavior_graph[from_node][to_node]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            return result
+        return wrapper
+    return decorator
+
+
+# =====================================================================
+# 3. EXISTING CODEBASE SIMULATION (HOW TO USE IT)
+# =====================================================================
+# You simply place the decorator over your existing legacy code blocks.
+
+@trace_path("EVENT_RECEIVED", "CHECK_SQLITE_OVERRIDE")
+def check_sqlite_override(event: dict) -> bool:
+    # Your existing SQLite active_overrides checking logic goes here
+    # Simulating finding an adhoc temporary bypass entry:
+    is_adhoc_deviation = event.get("is_adhoc", False)
+    return is_adhoc_deviation
+
+@trace_path("CHECK_SQLITE_OVERRIDE", "APPLY_ADHOC_BYPASS")
+def apply_adhoc_bypass(event: dict):
+    # Existing code handling ad-hoc box completions / short-duration anomalies
+    return f"Bypassed {event['job_name']} due to adhoc active rule."
+
+@trace_path("CHECK_SQLITE_OVERRIDE", "CALCULATE_BLAST_RADIUS")
+def calculate_blast_radius(event: dict):
+    # Existing NetworkX code calculating downstream job impacts
+    return f"Calculated blast radius for {event['job_name']}."
+
+
+# Core Orchestrator Event Loop
+def process_incoming_autosys_event(event: dict):
+    # Reset edge traversal animations before processing a fresh event stream
+    for u, v in behavior_graph.edges():
+        behavior_graph[u][v]["traversed_last_run"] = False
+        
+    # Flow execution runs exactly as before, updating the graph seamlessly
+    has_override = check_sqlite_override(event)
+    if has_override:
+        apply_adhoc_bypass(event)
+    else:
+        calculate_blast_radius(event)
+
+
+# =====================================================================
+# 4. STRAWBERRY GRAPHQL WRAPPER FOR USER VISIBILITY
+# =====================================================================
+@strawberry.type
+class BehaviorEdge:
+    source: str
+    target: str
+    label: str
+    traversedLastRun: bool
+    timestamp: str
+
+@strawberry.type
+class Query:
+    @strawberry.field
+    def get_agent_behavior_paths(self) -> List[BehaviorEdge]:
+        """
+        Streams the exact structure and active execution paths 
+        straight to your React frontend or GraphiQL panel.
+        """
+        edges_data = []
+        for u, v, data in behavior_graph.edges(data=True):
+            edges_data.append(Yes, Scenario-Based Coding is the exact architectural shift you need. By organizing your codebase around explicitly named production scenarios instead of generic code patches, you turn an unpredictable codebase into a reliable, deterministic matrix.
+To give you a comprehensive blueprint, I have compiled every major production scenario that occurs when managing a high-volume (2,000+ job) CA AutoSys environment. This is your master inventory.
+Here is the complete write-up of all possible scenarios, mapped directly to their system triggers and programmatic remediation paths, formatted in a single, clean visual reference.
+------------------------------
+## 🏢 Category 1: Upstream & Temporal Dependency Failures
+These scenarios occur when time, history, or scheduling conditions break the logical sequence of your batch topology.
+
+* Scenario 1: Look-Back Window Exceeded (LOOKBACK_BREACH)
+* The Issue: A downstream job wakes up, but its upstream dependency (condition: s(job_A)) completed successfully too far in the past (outside the look-back hours configured in AutoSys). The job stalls or fails.
+   * Agent Path: Calculate downstream blast radius via NetworkX → Query SQLite to see if a current-day data rerun override exists → Either programmatically trigger a force-start (sendjob -j JOB -c FORCE_START) or isolate the branch on the React dashboard.
+* Scenario 2: Cross-Application / Cross-Box Cross-Talk Failure (CROSS_BOX_STALL)
+* The Issue: A job inside Box_A is waiting on a job inside Box_B. Box_B encounters an error, causing Box_A to freeze indefinitely without explicitly transitioning to a failed state.
+   * Agent Path: Use NetworkX to trace inter-box edge dependencies → Identify the specific blocking node inside the foreign box → Extract its last known status and surface the exact cross-talk blocker to the operator UI.
+* Scenario 3: Non-Standard Calendar / Holiday Shift (HOLIDAY_BYPASS)
+* The Issue: A job is skipped or runs out of order because an AutoSys custom calendar excludes a specific holiday, but the downstream application expected data files anyway.
+   * Agent Path: Intercept the INACTIVE state event from AutoSys → Check if today is a calendar exception → Automatically insert a dummy "Success" state node inside the in-memory NetworkX topology so downstream dependencies don't freeze.
+
+------------------------------
+## ⏱️ Category 2: Execution & Runtime Anomalies
+These scenarios represent active jobs that are behaving abnormally while executing on the system infrastructure.
+
+* Scenario 4: The Infinite "STARTING" Loop (STUCK_STARTING)
+* The Issue: AutoSys has sent the execution token to the remote system agent, but the agent fails to send back a RUNNING signal. The job hangs in STARTING status forever due to network drops or agent crashes.
+   * Agent Path: Trigger on event threshold where status is STARTING and duration > 10 mins → Secure an execution lease in SQLite → Dispatch a kill command (sendjob -j JOB -c KILL) → Dispatch a command to force it back to RESTART.
+* Scenario 5: Statistical Runtime Variance Overrun (STALLED_RUNNING)
+* The Issue: A job successfully transitions to RUNNING but exceeds its historical 3-sigma maximum duration threshold, indicating an infinite database loop or frozen system thread.
+   * Agent Path: Compute runtime deviations using historical metadata → If it violates the threshold, flag the node in bright red on the React WebSockets interface → Hold automated remediation until an operator approves a database thread dump.
+* Scenario 6: Max Run-Alarms and Automatic Loop Detonation (MAX_RUN_ALARM)
+* The Issue: The job triggers an AutoSys internal runtime alarm (MAX_RUN_ALARM), meaning it has breached hardcoded operational safety guardrails.
+   * Agent Path: Read the alarm stream via FastAPI → Immediately perform graph math to isolate the blast radius → Programmatically put a hold (sendjob -j JOB -c HOLD) on all immediate downstream child jobs to protect system resources.
+
+------------------------------
+## 🛑 Category 3: Termination & Exit Status Disruptions
+These scenarios occur when a job ends abruptly and requires direct structural intervention.
+
+* Scenario 7: Clean Infrastructure Crash / Non-Zero Exit Code (TERMINATED_RETRYABLE)
+* The Issue: The batch script terminates with a transient system error code (e.g., database connection timeout, network socket closed). The code logic is fine; the environment failed.
+   * Agent Path: Parse the exit_code inside the FastAPI event payload → Match against an enterprise retryable-error list → If retry count inside SQLite is < 3, execute a programmatic job restart (sendjob -j JOB -c STARTJOB).
+* Scenario 8: Fatal Application Crash (TERMINATED_FATAL)
+* The Issue: The script aborts with a severe application-level error (e.g., data validation failed, null pointer exception). Retrying the job without fixing the underlying data will fail again.
+   * Agent Path: Flag the event as un-retryable → Calculate the complete downstream impact path via NetworkX → Push the entire failed sub-graph to the React frontend so the operator can see exactly which 15 downstream jobs are now blocked.
+* Scenario 9: Ad-Hoc Interrupted Box Completion (BOX_FORCE_COMPLETE)
+* The Issue: A human operator manually terminates or forces a sub-job, leaving the parent AutoSys Box Job in a confused, non-completed state that blocks subsequent batch chains.
+   * Agent Path: Detect manual user intervention via the status stream → Evaluate if the remaining elements inside the parent box can be skipped → Programmatically send a success override command (sendjob -j BOX_NAME -c FORCE_COMPLETE) to cleanly close the box sequence.
+
+------------------------------
+## 🗄️ Category 4: Resource & Data Availability Barriers
+These scenarios happen when jobs fail because external dependencies (like files or space) are missing.
+
+* Scenario 10: Missing Inbound File / Upstream Data Latency (MISSING_TRIGGER_FILE)
+* The Issue: A file-trigger job (machine: local_agent + file dependency monitoring) fails to fire because an external client did not upload an expected dataset on time.
+   * Agent Path: Evaluate if the look-back timeframe has expired → Check SQLite metadata to see if an official business extension was granted → Alert operators via the UI with an ETA indicator based on previous batch cycles.
+* Scenario 11: Machine/Agent Offline or Unreachable (MACHINE_OFFLINE)
+* The Issue: AutoSys attempts to dispatch a batch process to a targeted application host machine, but the remote system is unresponsive or out of storage space.
+   * Agent Path: Intercept the explicit MACHINE_OFFLINE alarm → Use NetworkX to find all active jobs currently routed to that specific machine payload → Bulk-isolate those streams on the React dashboard and halt automated self-healing to prevent cascading server overloads.
+
+------------------------------
+## 🛠️ How to Organize This in Your Code Base
+To ensure these scenarios do not cause code regressions, map each of the 11 Scenario IDs directly to its own file or isolated class inside your engine structure:
+
+your_project/
+│
+├── core_engine/
+│ ├── matrix.py <-- Evaluates the scenarios
+│ └── networkx_base.py <-- Pure graph topology math
+│
+└── scenarios/
+    ├── __init__.py
+    ├── scenario_lookback.py <-- Scenario 1 code only
+    ├── scenario_stuck_starting.py <-- Scenario 4 code only
+    └── scenario_fatal_crash.py <-- Scenario 8 code only
+
+By coding this way, when you need to update how your system handles a STUCK_STARTING event, you modify only scenario_stuck_starting.py. It is physically impossible to break your stable LOOKBACK_BREACH or TERMINATED_FATAL execution paths.
+Would you like to draft a standardized Python configuration template that uses these Scenario IDs to organize your code files, or should we map out how these specific scenarios should look when rendered inside your GraphiQL Console or React UI dashboard?
+
+
+Not at all. You do not need to rewrite your current codebase or throw away your existing logic.
+Your current if/else rigmarole is actually incredibly valuable—it contains all your hard-earned production rules and domain knowledge. Shifting to this architecture isn't about deleting your code; it is a refactoring exercise where you clip those if/else branches and paste them into isolated files.
+Here is the exact, step-by-step strategy to migrate your "dump" into the Scenario Matrix with zero downtime and very little overhead.
+------------------------------
+## Step 1: Create the Empty Matrix Shell
+First, drop the untouchable core engine (the ScenarioEngineMatrix from our previous discussion) into your codebase. At first, this list is completely empty.
+## Step 2: The "Strangler Fig" Migration Strategy
+Instead of trying to move all 11 scenarios at once, you move them one by one.
+Look at your current giant if/else function. It probably looks something like this:
+
+# ❌ YOUR CURRENT DUMPdef process_autosys_event_legacy(event):
+    if event.get("status") == "STARTING" and event.get("duration") > 600:
+        # ... 50 lines of complex stuck job logic ...
+        return "remediated_stuck"
+        
+    elif "lookback" in event.get("desc", ""):
+        # ... 40 lines of lookback logic ...
+        return "handled_lookback"
+        
+    # ... 500 more lines of nested if/else ...
+
+To migrate without risk, pluck out just one single scenario (e.g., the stuck job logic). Cut that block of code out of your if statement, and drop it into a clean, isolated class:
+
+# YOUR NEW ISOLATED FILE (scenarios/stuck_starting.py)class StalledJobRule(ProductionScenarioRule):
+    def scenario_id(self): 
+        return "SCENARIO_STUCK_STARTING"
+
+    def matches(self, event, graph):
+        # This matches the exact condition from your old 'if' statement
+        return event.get("status") == "STARTING" and event.get("duration") > 600
+
+    def execute_remediation(self, event, graph, db):
+        # PASTE YOUR EXACT OLD CODE HERE UNCHANGED
+        # ... 50 lines of complex stuck job logic ...
+        return {"action": "AUTOSYS_KILL_AND_RESTART"}
+
+## Step 3: Connect the Legacy Code to the New Matrix
+Now, update your legacy main loop so that it checks your new Matrix first. If the matrix matches the event, it runs the safe, isolated scenario. If the matrix doesn't match yet, it safely falls back into your old, un-refactored if/else dump.
+
+# 🔄 THE INTERIM BRIDGE (Zero Risk)from core_engine.matrix import ScenarioEngineMatrixmatrix_engine = ScenarioEngineMatrix() # Contains your newly moved rules
+def process_autosys_event(event, graph, db):
+    # 1. Try the new, clean rules engine first
+    matrix_result = matrix_engine.process_event(event, graph, db)
+    if matrix_result["status"] == "PROCESSED":
+        return matrix_result # Scenario handled beautifully!
+
+    # 2. FALLBACK: If a scenario hasn't been migrated yet, run the old dumpBased on your exact multi-agent structure, your newly suggested Scenario Matrix sits directly inside the Brain of the Analyzer Agent.
+It does not replace any of your 5 agents. Instead, it serves as the internal decision-making engine for the Analyzer, converting its messy if/else logic into a clean, predictable pipeline.
+------------------------------
+## 🗺️ Where the Matrix Sits in Your Agent Flow
+
+[ AutoSys Event Stream ] ──> [ ORCHESTRATOR AGENT ] 
+                                    │ (Dispatches Event)
+                                    ▼
+                             [ ANALYZER AGENT ]
+                       ┌────────────────────────────┐
+                       │ SCENARIO ENGINE MATRIX │ <-- Sits right here!
+                       │ (Matches & Plans Fix) │
+                       └────────────┬───────────────┘
+                                    │ (Outputs precise Recipe/Playbook)
+                                    ▼
+                               [ FIXER AGENT ] ──> Uses Unix/DB MCPs to remediate
+                                    │
+                                    ├───> [ NOTIFIER AGENT ] ──> Sends Emails
+                                    │
+                                    └───> [ COORDINATOR AGENT ] ──> Syncs Graph & UI State
+
+------------------------------
+## 🔄 The Agent Handshake (How it Works)
+
+   1. Orchestrator: Ingests the AutoSys event stream and passes it straight to the Analyzer.
+   2. Analyzer (Powered by the Matrix Shell): Instead of running a messy if/else loop, the Analyzer passes the event through the Matrix. The matching Scenario Card fires and generates a precise, deterministic Remediation Recipe (e.g., "This is a Scenario 4 Stuck Starting job. The playbook says to run a Unix Kill command, then a database status reset").
+   3. Fixer: Receives that exact Recipe from the Analyzer. It doesn't have to think or evaluate; it just uses its Unix and DB MCPs to blindly execute the commands in the recipe.
+   4. Notifier: Receives the output and handles the emails.
+   5. Coordinator: Updates your NetworkX graph topology and pushes the live state changes out to your React frontend via WebSockets.
+
+------------------------------
+## 📂 Copiable Architecture: The Analyzer's New Matrix
+Here is how you drop this pattern straight into your Analyzer Agent without disrupting the rest of your agentic stack.
+
+import abcfrom typing import Dict, Any, List
+# =====================================================================# 1. THE UNTOUCHABLE BLUEPRINT FOR THE ANALYZER'S BRAIN# =====================================================================class AnalyzerScenarioRule(abc.ABC):
+    """
+    Every scenario handled by the Analyzer must implement this contract.
+    Instead of executing fixes directly, it generates a "Recipe" for the Fixer.
+    """
+    @property
+    @abc.abstractmethod
+    def scenario_id(self) -> str:
+        pass
+
+    @abc.abstractmethod
+    def matches(self, event: Dict[str, Any], graph_context: Any) -> bool:
+        """Analyzer logic to identify the exact production issue."""
+        pass
+
+    @abc.abstractmethod
+    def generate_remediation_recipe(self, event: Dict[str, Any], graph_context: Any) -> Dict[str, Any]:
+        """Analyzer logic to build the exact instructions for the Fixer & Notifier."""
+        pass
+
+# =====================================================================# 2. AN ISOLATED SCENARIO FILE IN THE ANALYZER (Example: Stuck Starting)# =====================================================================class AnalyzerStuckStartingRule(AnalyzerScenarioRule):
+    @property
+    def scenario_id(self) -> str:
+        return "SCENARIO_STUCK_STARTING"
+
+    def matches(self, event: Dict[str, Any], graph_context: Any) -> bool:
+        # Analyzer rule condition pulled out of your old if/else dump
+        return event.get("status") == "STARTING" and event.get("duration_seconds", 0) > 600
+
+    def generate_remediation_recipe(self, event: Dict[str, Any], graph_context: Any) -> Dict[str, Any]:
+        """
+        The Analyzer creates a standardized recipe payload.
+        The Fixer, Notifier, and Coordinator will read this to do their jobs.
+        """
+        return {
+            "target_job": event.get("job_name"),
+            "fixer_instructions": {
+                "use_mcp": "unix_server_mcp",
+                "commands": [
+                    f"sendjob -j {event['job_name']} -c KILL",
+                    f"sendjob -j {event['job_name']} -c RESTART"
+                ]
+            },
+            "notifier_instructions": {
+                "template": "stuck_job_alert",
+                "recipients": ["ops_team@enterprise.com"]
+            },
+            "coordinator_instructions": {
+                "graph_action": "MARK_NODE_RESTARTING",
+                "ui_highlight_color": "amber"
+            }
+        }
+
+# =====================================================================# 3. THE ANALYZER AGENT CLASS (THE MATRIX SHELL)# =====================================================================class AnalyzerAgent:
+    def __init__(self):
+        # Start empty, or append your scenario rules here one by one
+        self._scenario_matrix: List[AnalyzerScenarioRule] = [
+            AnalyzerStuckStartingRule()
+            # As you isolate more scenarios, drop their classes here!
+        ]
+
+    def analyze_event(self, event: Dict[str, Any], networkx_graph: Any) -> Dict[str, Any]:
+        """
+        This replaces the old legacy if/else dump inside your Analyzer.
+        """
+        # 1. Try the clean, isolated Scenario Matrix first
+        for rule in self._scenario_matrix:
+            if rule.matches(event, networkx_graph):
+                recipe = rule.generate_remediation_recipe(event, networkx_graph)
+                return {
+                    "status": "ANALYSIS_COMPLETE",
+                    "scenario_id": rule.scenario_id,
+                    "recipe": recipe
+                }
+
+        # 2. FALLBACK: If no rules match yet, route it to your legacy if/else dump
+        return self._run_legacy_if_else_analyzer_dump(event, networkx_graph)
+
+    def _run_legacy_if_else_analyzer_dump(self, event, graph):
+        # Your current legacy, un-refactored Analyzer code stays here temporarily
+        # It runs safely whenever the new matrix returns no matches.
+        return {"status": "LEGACY_PROCESSING", "recipe": {}}
+
+------------------------------
+## 🚀 How the Orchestrator executes this pipeline
+When an event comes into your FastAPI layer, your Orchestrator coordinates the execution using the Analyzer's new recipe output:
+
+analyzer = AnalyzerAgent()
+# Inside your Orchestrator Agent's main dispatch loop:def orchestrate_event_flow(event, networkx_graph):
+    # Step 1: Call the Analyzer to get the precise playbook/recipe
+    analysis = analyzer.analyze_event(event, networkx_graph)
+    recipe = analysis.get("recipe")
+    
+    if not recipe:
+        return "No automated recipe found. Routing to standard manual queue."
+
+    # Step 2: Hand off the fixer instructions to the Fixer Agent
+    if "fixer_instructions" in recipe:
+        fixer_agent.execute(recipe["fixer_instructions"])
+
+    # Step 3: Hand off email notification instructions to the Notifier Agent
+    if "notifier_instructions" in recipe:
+        notifier_agent.send(recipe["notifier_instructions"])
+
+    # Step 4: Hand off structural updates to the Coordinator Agent
+    if "coordinator_instructions" in recipe:
+        coordinator_agent.sync_state(recipe["coordinator_instructions"], networkx_graph)
+        
+    return f"Flow fully executed for {analysis['scenario_id']}"
+
+## Why This Resolves Your Side-Effects Completely
+The Analyzer now only does one thing: it takes an event and outputs a static, un-executable text JSON recipe. Because it is completely decoupled from the actual Unix/DB execution scripts (which are safely encapsulated inside the Fixer's MCPs), modifying the matching parameters or logic conditions for one scenario cannot bleed into or break any other workflow execution path.
+If you want to test this migration strategy on your stack, tell me:
+
+* What is one specific rule or scenario block inside your current analyzer's if/else logic that frequently breaks or needs adjustments?
+
+I can map its exact parameters straight into an Analyzer Scenario Card for you.
+
+Here is the complete, comprehensive distillation of our entire architectural blueprint. It combines the system topologies, the multi-agent orchestration pattern, the race-condition guardrails, the Oracle DB optimization, and the Scenario Matrix layout into a single, clean, single-click copyable format for your documentation.
+
+# Architectural Specification: Intelligent Observability & Self-Healing Layer for CA AutoSys**System Classification:** Deterministic AIOps / Operator Companion Fabric
+**Scale Target:** 2,000+ Concurrent Batch Jobs
+**Core Philosophies:** Zero-LLM Hallucination Risk, Zero-Lag Topologies, Physical Code Isolation, and Just-In-Time State Validation.
+---## 1. Unified Tech Stack Architecture
+
+[ CA AutoSys Event Stream ]
+│
+▼
+[ FastAPI Endpoint ]
+│
+▼
+┌────────────────── [ ORCHESTRATOR AGENT ] ──────────────────┐
+│ │
+│ 1. Dispatches stream events │
+│ 2. Manages SQLite state/leases to block collisions │
+│ │
+└───────────────────────────┬────────────────────────────────┘
+│
+▼
+[ ANALYZER AGENT ]
+┌──────────────────────────────────────────┐
+│ Scenario-Based Engine Matrix │
+│ - Loops through isolated Scenario Cards │
+│ - Generates unexecutable JSON Recipes │
+│ - Traced by secondary NetworkX graph │
+└────────────────────┬─────────────────────┘
+│ (Static Recipe Payload)
+▼
+┌────────────────────────────────────────────────────┐
+│ [ FIXER AGENT ] │
+│ │
+│ 1. JIT Check: Hits Oracle DB MCP (ujo_jobstatus) │
+│ 2. If status matches recipe pre-condition: │
+│ Executes Unix/DB MCP remediation actions │
+└───────────────┬────────────────────────────┬───────┘
+│ │
+▼ ▼
+[ NOTIFIER AGENT ] [ COORDINATOR AGENT ]
+(Sends Automated Emails) (Syncs In-Memory NetworkX Graph
+& WebSocket Broadcasts)
+│
+▼
+[ REACT.JS + VITE UI ]
+(Real-Time Light-up Console)
+
+
+### Stack Components
+* **Core Engine Layer:** CA AutoSys (Source of truth scheduling engine) + NetworkX In-Memory Topology (Dynamic graph math, blast radius computation, critical path tracing, and look-back window evaluations).
+* **Persistence Layer:** Local SQLite Database (Agent operational states, execution lease management, memory management, and audit trailing).
+* **API Gateway Layer:** FastAPI (High-performance async web routing) + Strawberry GraphQL (Type-safe API and native WebSocket subscription streaming).
+* **Frontend Interface:** React.js + Vite (Zero-lag web dashboard utilizing a focused viewport approach to prevent 2,000-node browser canvas lag).
+
+---
+
+## 2. Structural Fix: Breaking "Rule Bloat" & Regressions
+
+### The Problem: The "if/else" Rigmarole
+Writing continuous patches as global `if/elif/else` logical structures leads to tight control-flow coupling. Modifying logic to fix one edge case inherently causes regressions across your regular batch runs, leading to a daily ritual of playing whack-a-mole.
+
+### The Permanent Solution: Scenario-Based Coding Matrix
+1. **Isolate Scenarios:** Break down every production anomaly into its own self-contained file or class implementing a strict `matches()` and `generate_remediation_recipe()` interface contract.
+2. **No Shared State:** If a bug is introduced into a newly added scenario rule, it is physically locked inside that class. It cannot contaminate stable execution paths.
+3. **Crash Insulation:** Wrap the matrix evaluator loop in error-catching blocks to prevent individual rule failures from bringing down the entire monitoring agent fabric.
+
+---
+
+## 3. The 11 Core AutoSys Production Scenarios Reference
+
+Every failure mode, temporary deviation, or execution error must be mapped to one of these standardized IDs:
+
+### Category A: Upstream & Temporal Dependency Failures
+* **`SCENARIO_LOOKBACK_BREACH`**: Downstream job fires but its parent dependency succeeded outside the allowed historical hour parameter.
+* **`SCENARIO_CROSS_BOX_STALL`**: Inter-box cross-talk dependencies freeze (Job inside Box A is waiting on an inactive job inside Box B).
+* **`SCENARIO_HOLIDAY_BYPASS`**: Custom calendar exceptions skip job creation, breaking expected downstream input loops.
+
+### Category B: Execution & Runtime Anomalies
+* **`SCENARIO_STUCK_STARTING`**: AutoSys agent dispatches execution token but fails to receive a `RUNNING` acknowledgement, stalling the job in `STARTING` status indefinitely.
+* **`SCENARIO_STALLED_RUNNING`**: Active job breaches its historical 3-sigma maximum runtime duration threshold (indicating infinite DB loops or thread locks).
+* **`SCENARIO_MAX_RUN_ALARM`**: Job breaches hardcoded internal infrastructure execution caps, triggering an engine alarm.
+
+### Category C: Termination & Exit Status Disruptions
+* **`SCENARIO_TERMINATED_RETRYABLE`**: Job drops with a known transient infrastructure error code (e.g., temporary database connection drops, network socket resets).
+* **`SCENARIO_TERMINATED_FATAL`**: Script explicitly crashes with code failures or missing application data validations where retrying will fail again.
+* **`SCENARIO_BOX_FORCE_COMPLETE`**: Human operators forcefully alter a sub-job status, leaving parent box wrappers in hung states.
+
+### Category D: Resource & Data Availability Barriers
+* **`SCENARIO_MISSING_TRIGGER_FILE`**: File watcher jobs fail to execute because external file uploads missed their arrival deadlines.
+* **`SCENARIO_MACHINE_OFFLINE`**: Targets machine nodes drop offline or completely run out of storage space right at the moment of job dispatch.
+
+---
+
+## 4. Bypassing TOCTOU Race Conditions via Oracle DB MCP
+
+### The Trap: `autorep -j` Overheads
+Invoking `autorep -j` via a Unix shell MCP triggers severe Operating System overhead. The OS must fork a new process, load environment binaries, and set up a heavy CLI stdout string table. This creates an execution lag of **200ms to 1500ms**, opening a wide Time-of-Check to Time-of-Use (TOCTOU) race condition window where statuses change while the agent is processing text string regex patterns.
+
+### The Solution: Direct Oracle Database Verification
+The AutoSys underlying Oracle database engine (the Event Server) is the actual scheduler engine. Status commits occur instantly in the database table `ujo_jobstatus` *before* downstream jobs are evaluated. 
+
+By setting up an optimized, persistent read-only connection pool directly to the Oracle instance, the **Fixer Agent** performs an explicit, sub-5ms atomic "Just-In-Time" query right before triggering its remediation command. If the live status has changed, the action aborts immediately, locking out race conditions.
+
+#### AutoSys Database Reference Map (`ujo_jobstatus.status`)
+* `1` = **RUNNING**
+* `3` = **STARTING**
+* `4` = **SUCCESS**
+* `5` = **FAILURE**
+* `6` = **TERMINATED**
+* `7` = **ON_HOLD**
+* `8` = **QUE_WAIT**
+
+---
+
+## 5. Single-Click Production Implementation Template
+
+Below is the complete, drop-in Python layout. It implements the **Empty Matrix Shell**, the **Analyzer Brain**, the **Oracle-backed Just-In-Time Fixer**, and the **Zero-Overhead NetworkX Secondary Behavior Graph** tracing.
+
+```python
+import abc
+import functools
+import time
+from typing import Dict, Any, List
+
+# =====================================================================
+# MODULE 1: THE SECONDARY NETWORKX BEHAVIOR GRAPH (TRACING INTERFACES)
+# =====================================================================
+import networkx as nx
+import strawberry
+
+behavior_graph = nx.DiGraph()
+
+# Build the Documentation Blueprint directly in Graph structures
+behavior_graph.add_edge("EVENT_INGEST", "EVALUATE_MATRIX", label="Route to Analyzer")
+behavior_graph.add_edge("EVALUATE_MATRIX", "STUCK_STARTING_HANDLER", label="Match Found")
+behavior_graph.add_edge("EVALUATE_MATRIX", "LEGACY_FALLBACK", label="No Match / Fallback")
+
+for u, v in behavior_graph.edges():
+    behavior_graph[u][v]["traversed"] = False
+    behavior_graph[u][v]["timestamp"] = ""
+
+def trace_path(from_node: str, to_node: str):
+    """Zero-overhead decorator to light up active paths on dashboards."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if behavior_graph.has_edge(from_node, to_node):
+                behavior_graph[from_node][to_node]["traversed"] = True
+                behavior_graph[from_node][to_node]["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            return result
+        return wrapper
+    return decorator
+
+
+# =====================================================================
+# MODULE 2: MOCK INFRASTRUCTURE (ORACLE DB & SHELL MCPS)
+# =====================================================================
+class OracleDatabaseMCP:
+    """Simulates persistent open connection pool to AutoSys backend server."""
+    def get_live_status_code(self, job_name: str) -> int:
+        # SELECT status FROM ujo_jobstatus WHERE job_name = :1
+        return 3 # Returns 3 -> Simulating a live 'STARTING' state
+
+class UnixServerMCP:
+    """Handles low-level execution command routing on targets."""
+    def execute_cmd(self, command: str):
+        print(f"[MCP EXECUTE]: Deployed command -> {command}")
+
+
+# =====================================================================
+# MODULE 3: THE ANALYZER SCENARIO MATRIX CONTRACT
+# =====================================================================
+class AnalyzerScenarioRule(abc.ABC):
+    @property
+    @abc.abstractmethod
+    def scenario_id(self) -> str: pass
+
+    @abc.abstractmethod
+    def matches(self, event: Dict[str, Any], graph_context: Any) -> bool: pass
+
+    @abc.abstractmethod
+    def generate_recipe(self, event: Dict[str, Any], graph_context: Any) -> Dict[str, Any]: pass
+
+
+# Concrete Scenario Implementation: Isolated to its own class boundary
+class AnalyzerStuckStartingRule(AnalyzerScenarioRule):
+    @property
+    def scenario_id(self) -> str:
+        return "SCENARIO_STUCK_STARTING"
+
+    def matches(self, event: Dict[str, Any], graph_context: Any) -> bool:
+        return event.get("status") == "STARTING" and event.get("duration_seconds", 0) > 600
+
+    def generate_recipe(self, event: Dict[str, Any], graph_context: Any) -> Dict[str, Any]:
+        return {
+            "target_job": event.get("job_name"),
+            "valid_only_if_status_is": "STARTING", # Strict Pre-Condition Guardrail
+            "fixer_instructions": {
+                "commands": [
+                    f"sendjob -j {event['job_name']} -c KILL",
+                    f"sendjob -j {event['job_name']} -c RESTART"
+                ]
+            }
+        }
+
+
+# =====================================================================
+# MODULE 4: AGENT PIPELINE CONTEXT WRAPPERS
+# =====================================================================
+class AnalyzerAgent:
+    def __init__(self):
+        # Empty matrix shell pattern: safe deployment path
+        self._matrix: List[AnalyzerScenarioRule] = [
+            AnalyzerStuckStartingRule() # Drop new scenarios here cleanly
+        ]
+
+    @trace_path("EVENT_INGEST", "EVALUATE_MATRIX")
+    def analyze_event(self, event: Dict[str, Any], networkx_graph: Any) -> Dict[str, Any]:
+        for rule in self._matrix:
+            if rule.matches(event, networkx_graph):
+                # Trigger trace animation link for matching route
+                if behavior_graph.has_edge("EVALUATE_MATRIX", "STUCK_STARTING_HANDLER"):
+                    behavior_graph["EVALUATE_MATRIX"]["STUCK_STARTING_HANDLER"]["traversed"] = True
+                
+                recipe = rule.generate_recipe(event, networkx_graph)
+                return {"status": "MATCHED", "recipe": recipe}
+        
+        return {"status": "UNMATCHED"}
+
+
+class FixerAgent:
+    def __init__(self, oracle_db: OracleDatabaseMCP, unix_box: UnixServerMCP):
+        self.db = oracle_db
+        self.unix = unix_box
+
+self.status_codes = {1: "RUNNING", 3: "STARTING", 4: "SUCCESS", 6: "TERMINATED"}
+def execute_remediation(self, recipe: Dict[str, Any]) -> str:
+job = recipe["target_job"]
+pre_condition = recipe["valid_only_if_status_is"]
+# JIT Check: Query direct Oracle table index (< 3ms latency)
+live_code = self.db.get_live_job_status_code(job)
+live_status = self.status_codes.get(live_code, "UNKNOWN")
+if live_status != pre_condition:
+return f"ABORT BLOCK: Race condition caught! {job} transitioned to {live_status}."
+# Execute only if ground truth validation yields safe metrics
+for cmd in recipe["fixer_instructions"]["commands"]:
+self.unix.execute_cmd(cmd)
+return "SUCCESS: Remediation completed safely."
+## =====================================================================## MODULE 5: CENTRAL ORCHESTRATOR LOOP (FASTAPI GATEWAY ENTRY POINT)## =====================================================================
+oracle_mcp = OracleDatabaseMCP()
+unix_mcp = UnixServerMCP()
+analyzer_agent = AnalyzerAgent()
+fixer_agent = FixerAgent(oracle_mcp, unix_mcp)
+def orchestrate_incoming_stream_pipeline(event: dict, networkx_graph_context: Any):
+# Reset tracking paths for new stream context
+for u, v in behavior_graph.edges():
+behavior_graph[u][v]["traversed"] = False
+# Step 1: Compute Analysis via Scenario Matrix Shell
+analysis = analyzer_agent.analyze_event(event, networkx_graph_context)
+if analysis["status"] == "MATCHED":
+# Step 2: Route directly to JIT Verification Fixer
+execution_report = fixer_agent.execute_remediation(analysis["recipe"])
+print(execution_report)
+else:
+# Step 3: Safe fallback loop to preserve unrefactored legacy logic blocks
+if behavior_graph.has_edge("EVALUATE_MATRIX", "LEGACY_FALLBACK"):
+behavior_graph["EVALUATE_MATRIX"]["LEGACY_FALLBACK"]["traversed"] = True
+print("[FALLBACK]: Routed to legacy if/else dump loop.")
+## =====================================================================## MODULE 6: STRAWBERRY GRAPHQL WRAPPERS FOR REACT VISUALIZATION## =====================================================================
+@strawberry.type
+class TraversedPathEdge:
+source: str
+target: str
+label: str
+isTraversed: bool
+timestamp: str
+@strawberry.type
+class Query:
+@strawberry.field
+def get_agent_execution_trace(self) -> List[TraversedPathEdge]:
+nodes_list = []
+for u, v, data in behavior_graph.edges(data=True):
+nodes_list.append(
+TraversedPathEdge(
+source=u, target=v,
+label=data.get("label", ""),
+isTraversed=data.get("traversed", False),
+timestamp=data.get("timestamp", "")
+)
+)
+return nodes_list
+graphql_schema = strawberry.Schema(query=Query)
+```
+
+
+***
+
+### 📊 Agent Fabric Resource Allocation Rules
+For a **2,000-job context**, your infrastructure requirement scales strictly against event burst sizes (concurrency peaks), rather than overall batch volume:
+* **Orchestrator Agent:** 1 Async Worker Thread (FastAPI router loop).
+* **Analyzer Agent:** 1 to 2 Worker Instances (In-memory NetworkX computations execute under **5ms**; CPU bound bottlenecks are negligible).
+* **Fixer Agent:** 1 Worker Pool with **3 to 5 concurrent asynchronous tasks** to absorb slow, external I/O execution windows when launching Unix `sendjob` endpoints.
+* **Notifier & Coordinator:** 1 Shared Async instance background pipeline.
+
+***
+
+<FollowUp>
+Would you like to build the **SQL queries to fully populate your initial NetworkX topology** directly from the AutoSys `ujo_job` and `ujo_job_cond` configuration tables, or draft the corresponding **React Flow frontend panel** to display this lighting-up behavior graph in real time?
+</FollowUp>
+
+    # Your remaining un-migrated if/else blocks live here temporarily
+    if "lookback" in event.get("desc", ""):
+        # ... old lookback logic ...
+        return "handled_lookback"
+
+------------------------------
+## Why this approach works perfectly for you:
+
+   1. Zero Big-Bang Rewrites: You can migrate just one scenario per week.
+   2. Immediate Relief from Side Effects: The moment a scenario is moved out of the old dump into its own file, it is permanently locked down. Changes to the remaining old if/else bundle can no longer break it.
+   3. No Code Loss: You aren't writing new automation logic; you are just giving your existing working code a safer, cleaner home.
+
+To help you get started on plucking out your first rule, paste just one branch of your current if/else statements (whichever one is causing the most frequent bugs or regressions). I will translate it into a completely isolated, copiable Scenario Class for your new engine layout.
+
+
+                BehaviorEdge(
+                    source=u,
+                    target=v,
+                    label=data.get("label", ""),
+                    traversedLastRun=data.get("traversed_last_run", False),
+                    timestamp=data.get("timestamp", "")
+                )
+            )
+        return edges_data
+
+schema = strawberry.Schema(query=Query)
+# Integration hook into your FastAPI instantiation:
+# app.include_router(GraphQLRouter(schema), prefix="/graphql")
+
+
+ 
