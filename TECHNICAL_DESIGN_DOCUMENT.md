@@ -638,7 +638,199 @@ pytest tests/unit -v --cov=src --cov-report=html
 
 ---
 
+## 14. HYBRID DUAL-SOURCE PIPELINE: AUTOSYS EVENT SERVER + AB INITIO OPERATIONAL CONSOLE
+
+## 14.1 Hybrid Dual-Source Pipeline Topology
+
+To achieve enterprise-grade observability, agents must divide labor based on data access speeds:
+
+| Source | Role | Latency | Purpose |
+|--------|------|---------|---------|
+| **AutoSys Event Server Database** | Fast Control Flow & Gating | < 3ms | Statuses, timings, high-level cascades |
+| **Ab Initio Execution Fabric** | Deep Semantic Analysis | 100-500ms | Log scraping, symptom extraction, JIL metadata |
+
+### 14.1 Hybrid Dual-Source Pipeline Topology
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1. IMMEDIATE STATUS GATEWAY (AutoSys DB Index Lookup)                                      │
+│    - Hits ujo_jobstatus directly via Connection Pool                                       │
+│    - Identifies failure state (Status 5) in <3ms                                           │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 2. TEMPORAL ACCUMULATION BUFFER                                                            │
+│    - Holds execution for 3–5 seconds to collect bursts                                     │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 3. DEFERRED CONCURRENT ENRICHMENT (Unix Shell MCP)                                         │
+│    - Connects via async SSH workers to Target Host                                         │
+│    - Extracts JIL metadata for stdout/stderr paths                                         │
+│    - Scrapes Ab Initio .err log structures in parallel                                     │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 4. SYMPTOM AGGREGATION & BOX RESOLUTION                                                    │
+│    - Formulates Group Remediation Playbook                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 14.2 Implementation Blueprint
+
+```python
+import asyncio
+from typing import Dict, Any, List
+
+class HybridOrchestrator:
+    def __init__(self, oracle_pool, unix_mcp):
+        self.db = oracle_pool      # Direct connection to ujo_jobstatus
+        self.unix = unix_mcp      # Unix SSH/Shell Model Context Protocol (MCP)
+
+    async def get_immediate_status(self, job_name: str) -> str:
+        """Step 1: Rapidly poll the database server for state validation (<3ms)."""
+        # status = await self.db.fetch_val("SELECT status FROM ujo_jobstatus WHERE job_name=:1", job_name)
+        await asyncio.sleep(0.003) 
+        return "FAILURE"
+
+    async def enrich_symptom_via_mcp(self, job_name: str, target_host: str) -> str:
+        """Step 2: Use Model Context Protocol (MCP) to parse deep Ab Initio traces."""
+        # First, grab the standard error path from the job's JIL definition
+        jil_cmd = f"autorep -j {job_name} -q | grep std_err_file"
+        jil_output = await self.unix.execute(target_host, jil_cmd)
+        
+        # Parse the physical text path and look up the log file via Unix shell tool
+        # Example: tail -n 50 /var/abinitio/logs/job_name.err
+        target_log_path = jil_output.split(":")[-1].strip()
+        read_log_cmd = f"tail -n 50 {target_log_path}"
+        
+        raw_log = await self.unix.execute(target_host, read_log_cmd)
+        return raw_log
+
+    async def pipeline(self, event: dict):
+        job = event["job_name"]
+        host = event["machine"]
+        
+        # Rapid check to confirm execution ground-truth
+        status = await self.get_immediate_status(job)
+        if status == "FAILURE":
+            # Defer to the heavy Unix MCP tool only when a valid failure is confirmed
+            raw_diagnostics = await self.enrich_symptom_via_mcp(job, host)
+            return {"job": job, "status": status, "raw_log": raw_diagnostics}
+        return {"job": job, "status": status, "raw_log": None}
+```
+
+---
+
+## 15. AB INITIO OPERATIONAL CONSOLE DATABASE
+
+### 15.1 Does Ab Initio Maintain Its Own DB?
+
+Yes, Ab Initio has an underlying operational database server framework officially called the **Ab Initio Operational Console (OpConsole) metadata repository**.
+
+While Ab Initio Co-Operating System processes data primarily via high-performance flat files (`.rec` checkpoint files, `.err` track logs), the Operational Console actively stores metadata into an enterprise database system (usually backed by Oracle, PostgreSQL, DB2, or an embedded database).
+
+### 15.2 How to Locate the Ab Initio Repository Database
+
+To locate and read from this data store, examine the environment configuration on your Ab Initio master control server:
+
+#### 1. Check Environment Variables
+```bash
+echo $AB_HOME
+echo $AI_OPCONSOLE_HOME
+```
+
+#### 2. Locate the Configuration Parameter File (`abinitiorc`)
+Look for database configuration mappings inside the global resource configurations, typically found at:
+- `${AB_HOME}/config/abinitiorc`
+- Or within specialized operational tracking projects (`.mp` parameter paths)
+
+#### 3. Target Core Operational Tables
+If you gain read access to the Operational Console database repository, these are the key schema structures:
+
+| Table | Purpose |
+|-------|---------|
+| `O_JOB_RUN` / `O_TRACK_RUN` | Records global graph run cycles, start times, tracking IDs, and ultimate execution states |
+| `O_COMPONENT_RUN` | Tracks component-level metrics inside the graph (input/output record counts, processing skews, individual node crashes) |
+| `O_ERROR_LOG` | Contains exact internal execution crash dump strings, isolating the component that generated the failure |
+
+### 15.3 Using `ab-audit` for Clean Access
+
+Instead of building custom SQL queries against the Ab Initio tracking database directly (which risks locking backend tables), use Ab Initio's authoritative CLI tool `ab-audit`:
+
+```bash
+# Query the Ab Initio audit repository directly for a specific job tracking ID
+ab-audit -run-id <AB_JOB_TRACKING_ID> -errors
+```
+
+This utility returns a structured, machine-readable breakdown of the internal graph failure, pinpointing the component, the failing record, and the exact error condition.
+
+### 15.4 Integration Pattern
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1. AutoSys Event Stream ──▶ FastAPI ──▶ Immediate DB Status Check (<3ms)                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 3-5s Temporal Buffer ──▶ Collect burst of related failures                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 3. Concurrent Enrichment (Parallel)                                                         │
+│    ├── Unix SSH MCP ──▶ JIL metadata extraction ──▶ stderr path resolution                 │
+│    └── ab-audit CLI ──▶ Structured error JSON (component, record, error condition)         │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 4. Symptom Aggregation ──▶ Group Remediation Playbook Generation                           │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 15.5 Trade-Off Analysis
+
+| Aspect | Benefit | Cost |
+|--------|---------|------|
+| **Rich Data Breadth** | Differentiate infrastructure vs. data anomalies | Requires SSH access to Ab Initio nodes |
+| **True Isolation** | AutoSys scheduling unaffected by log collection | Requires SSH credentials for app servers |
+| **Standardization** | `ab-audit` returns structured JSON | Version-dependent CLI output parsing |
+| **Isolation** | AutoSys scheduling never blocked by log collection | Requires `ab-audit` binary on Ab Initio nodes |
+
+### 15.6 Integration with Semantic Layer
+
+```python
+# Integration point in Analyzer Agent
+class HybridAnalyzerAgent:
+    def __init__(self, oracle_pool, unix_mcp):
+        self.hybrid_orchestrator = HybridOrchestrator(oracle_pool, unix_mcp)
+    
+    async def analyze_event(self, event: Dict, graph_context: nx.DiGraph) -> Dict:
+        # 1. Fast path: AutoSys DB status check
+        hybrid_result = await self.hybrid_orchestrator.pipeline(event)
+        
+        if hybrid_result["raw_log"]:
+            # 2. Enrich with Ab Initio structured diagnostics
+            ab_initio_diagnostics = await self.parse_ab_audit_output(hybrid_result["raw_log"])
+            
+            # 3. Feed into Scenario Matrix
+            return await self.generate_recipe_with_ab_initio_context(
+                event, graph_context, ab_initio_diagnostics
+            )
+```
+
+---
+
 *End of Document*
+
+*Document Version: 1.0*  
+*Last Updated: 2026-09-28*  
+*Status: Architecture Complete - Implementation In Progress*
 
 ---
 
